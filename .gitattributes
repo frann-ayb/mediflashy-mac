@@ -1,0 +1,23 @@
+# Normalización de fin de línea.
+#
+# El proyecto se edita en Windows y se compila en un runner de macOS. Sin esto,
+# lo que se guarda en el repositorio depende del `core.autocrlf` que tenga
+# configurado quien commitea, que es una variable invisible y ajena al proyecto.
+#
+# Importa de verdad en un archivo: .github/workflows/build-mac.yml lleva bloques
+# de bash adentro de los `run: |`. Si esas líneas llegaran al runner terminadas
+# en CRLF, bash falla con `$'\r': command not found` — un error que no menciona
+# los fines de línea por ningún lado y manda a buscar el problema en el script.
+*                text=auto eol=lf
+
+# Binarios: que git no los toque.
+*.png            binary
+*.ico            binary
+*.icns           binary
+*.gguf           binary
+*.exe            binary
+*.dll            binary
+*.dmg            binary
+*.zip            binary
+*.pdf            binary
+*.mfenc          binary

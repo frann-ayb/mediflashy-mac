@@ -1,0 +1,391 @@
+# La verificación más completa posible sin tener una Mac en la mano.
+#
+# NO compila nada: baja el .dmg que YA se firmó y notarizó en "Compilar para
+# Mac" y lo trata como lo trataría un comprador. Probar el artefacto que se
+# vende, y no uno recién compilado, es la diferencia entre verificar el producto
+# y verificar el proceso.
+#
+# QUÉ PRUEBA, en orden de importancia:
+#
+#   1. Que el MOTOR ARRANQUE Y GENERE con el hardened runtime puesto y la
+#      cuarentena aplicada. Es el agujero que dejaba el workflow de compilación:
+#      que Gatekeeper acepte la app no dice nada sobre si llama.cpp puede
+#      inicializar Metal bajo esas restricciones. Si no pudiera, el síntoma en la
+#      Mac del comprador no sería un cartel: sería que la generación nunca
+#      termina, sin nada en pantalla que lo explique.
+#   2. Que Gatekeeper la acepte con la cuarentena real de Safari puesta.
+#   3. Que la app abra a la primera, sin que el comprador autorice nada.
+#   4. Que los datos queden en ~/Library/Application Support/Mediflashy.
+#
+# QUÉ NO PRUEBA: la interfaz de punta a punta. El runner no tiene pantalla, así
+# que nadie hace clic en "Generar". Eso sigue necesitando una Mac de verdad.
+name: Probar en Mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      artefacto:
+        description: 'Artefacto a probar (de una corrida de "Compilar para Mac")'
+        type: choice
+        options:
+          - mediflashy-mac-entrega
+          - mediflashy-mac-prueba
+        default: mediflashy-mac-entrega
+      corrida:
+        description: 'ID de la corrida que lo generó. Vacío = la última que salió bien.'
+        type: string
+        default: ''
+
+# Lee el código y baja artefactos de otra corrida; no escribe nada.
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: probar-mac
+  cancel-in-progress: true
+
+jobs:
+  probar:
+    # Los runners macos-15 son Apple Silicon. Por eso el .dmg de M1/M2/M3/M4 se
+    # prueba ENTERO —motor incluido— y el de Intel sólo hasta la firma: su
+    # llama-server es x86_64 y acá no hay dónde ejecutarlo de forma
+    # representativa.
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Buscar la corrida que dejó el artefacto
+        id: corrida
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Por el entorno y no interpolado en el script: un texto con comillas o
+          # $(...) en el campo se ejecutaría con el token en el entorno.
+          CORRIDA: ${{ inputs.corrida }}
+        run: |
+          set -e
+          if [ -n "$CORRIDA" ]; then
+            case "$CORRIDA" in *[!0-9]*) echo "La corrida tiene que ser un número."; exit 1 ;; esac
+            ID="$CORRIDA"
+            echo "Corrida indicada a mano: $ID"
+          else
+            ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-mac.yml/runs?status=success&per_page=20" \
+              | python3 -c "import sys,json; rs=json.load(sys.stdin)['workflow_runs']; print(rs[0]['id'] if rs else '')")
+            [ -n "$ID" ] || { echo "No hay ninguna corrida exitosa de 'Compilar para Mac'."; exit 1; }
+            echo "Última corrida exitosa: $ID"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Bajar el .dmg ya firmado
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artefacto }}
+          path: entrega
+          run-id: ${{ steps.corrida.outputs.id }}
+          github-token: ${{ github.token }}
+
+      # El artefacto viene SELLADO (el repo es público). Se abre con la clave.
+      - name: Abrir el artefacto sellado
+        env:
+          MEDIFLASHY_CONTENIDO_KEY: ${{ secrets.MEDIFLASHY_CONTENIDO_KEY }}
+        run: |
+          set -e
+          [ -n "$MEDIFLASHY_CONTENIDO_KEY" ] || { echo "Falta el secret MEDIFLASHY_CONTENIDO_KEY."; exit 1; }
+          SELLADO=$(find entrega -name '*.mfenc' | head -1)
+          [ -n "$SELLADO" ] || { echo "El artefacto no trae ningún .mfenc."; exit 1; }
+          node scripts/contenido-cifrado.mjs abrir "$SELLADO" entrega
+
+      - name: Instalar como lo haría un comprador
+        run: |
+          set -e
+          ls -la entrega
+
+          # El de Apple Silicon. Sirve tanto el nombre de la entrega ("...M1 M2
+          # M3 M4.dmg") como el crudo de electron-builder ("...macOS-arm64.dmg").
+          DMG=$(find entrega -name "*.dmg" \( -name "*M1*" -o -name "*arm64*" \) | head -1)
+          [ -n "$DMG" ] || { echo "No encontré el .dmg de Apple Silicon."; exit 1; }
+          echo "Usando: $DMG"
+
+          hdiutil attach "$DMG" -nobrowse -quiet -mountpoint /Volumes/PruebaFC
+          ditto "/Volumes/PruebaFC/Mediflashy.app" "/Applications/Mediflashy.app"
+          hdiutil detach /Volumes/PruebaFC -quiet
+          echo "Instalada en /Applications."
+
+          # Esto es exactamente lo que le pone el navegador a un archivo bajado.
+          # Sin esto Gatekeeper ni se entera y la prueba no valdría nada. El `-r`
+          # es para que la marca llegue también a los binarios de Resources.
+          xattr -w -r com.apple.quarantine "0083;00000000;Safari;" "/Applications/Mediflashy.app"
+          echo "Cuarentena aplicada. En el motor:"
+          xattr -p com.apple.quarantine "/Applications/Mediflashy.app/Contents/Resources/llm/darwin-arm64/llama-server"
+
+      # ---------------------------------------------------------------------
+      # CORTA. Es la prueba de que la certificación sirve para algo.
+      # ---------------------------------------------------------------------
+      - name: Gatekeeper tiene que ACEPTAR la app
+        run: |
+          set -e
+          APP="/Applications/Mediflashy.app"
+
+          echo "=== codesign: quién la firmó ==="
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E '^(Authority|TeamIdentifier|Timestamp|Signature|CodeDirectory)'
+          if codesign -dv --verbose=4 "$APP" 2>&1 | grep -q 'Signature=adhoc'; then
+            echo "FALLA: quedó firmada ad-hoc."
+            exit 1
+          fi
+
+          echo ""
+          echo "=== el sello del bundle está intacto ==="
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          echo ""
+          echo "=== el ticket de notarización está pegado ==="
+          xcrun stapler validate "$APP"
+
+          echo ""
+          echo "=== spctl: lo que decide si el comprador puede abrirla ==="
+          SALIDA=$(spctl -a -t exec -vvv "$APP" 2>&1); echo "$SALIDA"
+          echo "$SALIDA" | grep -q ': accepted' \
+            || { echo "FALLA: Gatekeeper la RECHAZA."; exit 1; }
+          echo "$SALIDA" | grep -q 'source=Notarized Developer ID' \
+            || { echo "FALLA: Gatekeeper no la ve notarizada."; exit 1; }
+
+          echo ""
+          echo "OK: firmada, notarizada y aceptada, con la cuarentena puesta."
+
+      - name: El motor tiene que ARRANCAR en cuarentena
+        run: |
+          set -e
+          MOTOR="/Applications/Mediflashy.app/Contents/Resources/llm/darwin-arm64/llama-server"
+          echo "=== llama-server desde adentro del bundle, sin sacarle la cuarentena ==="
+          "$MOTOR" --version 2>&1 | head -5
+          echo ""
+          echo "OK: el binario carga. La validación de librerías no lo bloquea."
+
+      # Este es EL paso que justifica el workflow entero.
+      #
+      # `--version` prueba que el binario arranca, y nada más. La carga de
+      # librerías que el hardened runtime gobierna pasa cuando se carga un
+      # modelo, no antes. Por eso se baja el modelo de verdad —el mismo que usa
+      # la app en calidad Rápida, con el commit fijado— y se le pide una
+      # generación real.
+      #
+      # LOS FLAGS SON LOS DE LA APP, uno por uno (ver llamaServer.ts). Una
+      # prueba que corre el motor de otra forma no prueba el producto.
+      #
+      # Importa sobre todo `-ngl 0`: el zip que se distribuye es el build de
+      # CPU. La primera versión de este paso usaba `-ngl 99` "para forzar
+      # Metal", y el resultado fue una lección: el motor arrancó, generó
+      # tokens, y el texto salió corrupto —"in the the the the…"— con el log
+      # lleno de `ggml_metal_buffer_get_id: buffer is nil`. O sea que la prueba
+      # habría dado por rota una app que está bien, por correrla de una forma
+      # en la que nunca corre. Si algún día se cambia al build con GPU, esto se
+      # prueba ANTES de distribuirlo.
+      - name: El motor tiene que GENERAR de verdad
+        timeout-minutes: 20
+        run: |
+          set -e
+          MOTOR="/Applications/Mediflashy.app/Contents/Resources/llm/darwin-arm64/llama-server"
+          MODELO="$RUNNER_TEMP/Qwen3.5-2B-Q4_K_M.gguf"
+
+          echo "=== bajando el modelo (1,3 GB, el mismo que usa la app) ==="
+          curl -sL --retry 3 -o "$MODELO" \
+            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf"
+          ls -la "$MODELO"
+
+          echo ""
+          echo "=== levantando el motor igual que la app ==="
+          "$MOTOR" --model "$MODELO" --port 8099 --host 127.0.0.1 \
+            -c 8192 -np 1 -ngl 0 --no-webui --jinja --no-warmup \
+            > "$RUNNER_TEMP/motor.log" 2>&1 &
+          MOTOR_PID=$!
+
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:8099/health >/dev/null 2>&1; then break; fi
+            if ! kill -0 $MOTOR_PID 2>/dev/null; then
+              echo "FALLA: el motor murió mientras arrancaba."
+              cat "$RUNNER_TEMP/motor.log"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if ! curl -sf http://127.0.0.1:8099/health >/dev/null 2>&1; then
+            echo "FALLA: el motor no respondió en 180 segundos."
+            cat "$RUNNER_TEMP/motor.log"
+            kill $MOTOR_PID 2>/dev/null || true
+            exit 1
+          fi
+          echo "El motor responde."
+
+          echo ""
+          echo "=== pidiéndole una generación real ==="
+          # Qwen3.5 es un modelo de RAZONAMIENTO: escribe primero en
+          # `reasoning_content` y deja `content` vacío hasta terminar de pensar.
+          # Con max_tokens chico se queda razonando, corta por `length` y
+          # devuelve content vacío aunque la inferencia haya andado perfecto.
+          # Ya pasó: 16 tokens alcanzaban para pensar y no para responder.
+          #
+          # Se le da aire y se acepta cualquiera de los dos campos: lo que este
+          # paso tiene que probar es que el motor CARGA EL MODELO Y GENERA con
+          # el hardened runtime puesto, no la calidad de la respuesta.
+          RESP=$(curl -sf -m 180 http://127.0.0.1:8099/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"Contestá con una sola palabra: ¿cuál es la capital de Francia?"}],"max_tokens":400,"temperature":0}')
+          echo "$RESP" | head -c 400
+          echo ""
+
+          # Con jq y no con python: un `python3 -c` de varias líneas adentro de
+          # un bloque `run: |` rompe la indentación del YAML y el workflow deja
+          # de parsear. jq viene instalado en los runners y resuelve en una línea.
+          CONTENIDO=$(echo "$RESP" | jq -r '.choices[0].message.content // ""')
+          RAZONA=$(echo "$RESP" | jq -r '.choices[0].message.reasoning_content // ""')
+
+          echo ""
+          echo "  content:           $(echo "$CONTENIDO" | head -c 120)"
+          echo "  reasoning_content: $(echo "$RAZONA" | head -c 120)"
+
+          if [ -z "$CONTENIDO" ] && [ -z "$RAZONA" ]; then
+            echo "FALLA: el motor no produjo ni un token."
+            tail -40 "$RUNNER_TEMP/motor.log"
+            kill $MOTOR_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          # Que salgan tokens no alcanza: una inferencia rota también los saca.
+          # Se pregunta algo con UNA respuesta correcta y se exige acertar. Es la
+          # diferencia entre "el proceso corrió" y "el modelo pensó".
+          TODO=$(printf '%s %s' "$CONTENIDO" "$RAZONA" | tr '[:upper:]' '[:lower:]')
+          if echo "$TODO" | grep -q "par"; then
+            echo ""
+            echo "OK: el modelo cargó y contestó bien. La inferencia es correcta."
+          else
+            echo ""
+            echo "FALLA: generó texto pero la respuesta no tiene sentido."
+            echo "       Es la firma de una inferencia corrupta, no de un modelo"
+            echo "       que se equivocó: la pregunta tiene una sola respuesta."
+            tail -40 "$RUNNER_TEMP/motor.log"
+            kill $MOTOR_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          kill $MOTOR_PID 2>/dev/null || true
+          sleep 2
+
+          echo ""
+          echo "=== cómo cargó el modelo ==="
+          grep -iE "load_tensors|n_ctx|backend|CPU buffer|model size" "$RUNNER_TEMP/motor.log" | head -10 || true
+
+      # Se lanza el EJECUTABLE, no `open -a`.
+      #
+      # `open` le pide el trabajo a LaunchServices, que en un runner sin sesión
+      # gráfica no contesta: el comando queda esperando para siempre y el paso
+      # muere por timeout sin decir nada útil. Pasó en la primera corrida.
+      #
+      # Lanzar el binario directo prueba lo que importa igual —que el proceso
+      # principal arranque con el hardened runtime y la cuarentena puestos, que
+      # siembre los mazos y que escriba donde tiene que escribir— y no depende
+      # de que haya alguien mirando una pantalla.
+      - name: La app tiene que ARRANCAR en cuarentena, sin autorizar nada
+        timeout-minutes: 5
+        run: |
+          set -e
+          DATOS="$HOME/Library/Application Support/Mediflashy"
+          rm -rf "$DATOS"
+
+          # Las redirecciones no son adorno: el proceso queda vivo a propósito y
+          # heredaría las tuberías del paso, que el runner espera que se cierren.
+          "/Applications/Mediflashy.app/Contents/MacOS/Mediflashy" \
+            </dev/null > "$RUNNER_TEMP/app.log" 2>&1 &
+          APP_PID=$!
+
+          for i in $(seq 1 40); do
+            [ -f "$DATOS/logs/mediflashy.log" ] && break
+            if ! kill -0 $APP_PID 2>/dev/null; then
+              echo "FALLA: la app murió al arrancar."
+              cat "$RUNNER_TEMP/app.log"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if [ ! -f "$DATOS/logs/mediflashy.log" ]; then
+            echo "FALLA: la app no escribió su registro en 80 segundos."
+            cat "$RUNNER_TEMP/app.log"
+            kill $APP_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          sleep 8
+          echo "=== el registro que dejó la app ==="
+          cat "$DATOS/logs/mediflashy.log"
+          kill $APP_PID 2>/dev/null || true
+          echo ""
+          echo "OK: arrancó con la cuarentena puesta, sin autorizar nada."
+
+      # Lo que encontró Convertexto: un binario que en el runner anda porque ahí
+      # hay Homebrew, y en la Mac del comprador no abre. Se mira con otool.
+      - name: Los motores no dependen de Homebrew
+        run: |
+          set -e
+          MAL=0
+          for F in /Applications/Mediflashy.app/Contents/Resources/llm/darwin-*/llama-server \
+                   /Applications/Mediflashy.app/Contents/Resources/llm/darwin-*/*.dylib; do
+            [ -f "$F" ] || continue
+            if otool -L "$F" | tail -n +2 | grep -Eq '/opt/homebrew|/usr/local/(lib|opt)'; then
+              echo "FALLA: $F depende de Homebrew:"
+              otool -L "$F" | grep -E '/opt/homebrew|/usr/local'
+              MAL=1
+            fi
+          done
+          [ "$MAL" = 0 ] && echo "OK: ni llama-server ni sus bibliotecas apuntan a Homebrew."
+          exit $MAL
+
+      - name: Los datos tienen que quedar en Application Support
+        run: |
+          set -e
+          DATOS="$HOME/Library/Application Support/Mediflashy"
+          [ -d "$DATOS" ] || { echo "FALLA: no se creó $DATOS"; exit 1; }
+          echo "OK: $DATOS"
+          ls -la "$DATOS"
+
+          echo ""
+          echo "=== los mazos de regalo, sembrados en el primer arranque ==="
+          N=$(find "$DATOS/unidades" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+          # La cifra sale de la misma constante que usa la app para sembrar.
+          ESPERADAS=$(grep -oE '^export const UNIDADES_DE_REGALO = [0-9]+' src/shared/types.ts | grep -oE '[0-9]+$')
+          [ -n "$ESPERADAS" ] || { echo "No pude leer UNIDADES_DE_REGALO de src/shared/types.ts"; exit 1; }
+          echo "$N unidad(es), se esperaban $ESPERADAS"
+          # Son las unidades de regalo que promete la landing. Si la siembra
+          # dejara de correr, el comprador abre la app el primer día y encuentra
+          # la biblioteca vacía, y nada más lo delataría: la app abre y funciona.
+          [ "$N" = "$ESPERADAS" ] || { echo "FALLA: tenían que ser $ESPERADAS."; exit 1; }
+          echo "OK: las $ESPERADAS unidades de regalo están."
+
+      - name: El .dmg de Intel, hasta donde se puede probar acá
+        run: |
+          set -e
+          DMG=$(find entrega -name "*.dmg" \( -name "*Intel*" -o -name "*x64*" \) | head -1)
+          [ -n "$DMG" ] || { echo "No encontré el .dmg de Intel."; exit 1; }
+          echo "Usando: $DMG"
+
+          hdiutil attach "$DMG" -nobrowse -quiet -mountpoint /Volumes/PruebaFCx64
+          APP="/Volumes/PruebaFCx64/Mediflashy.app"
+
+          echo "=== firma ==="
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E '^(Authority|TeamIdentifier|Timestamp)'
+          echo ""
+          echo "=== notarización y Gatekeeper ==="
+          xcrun stapler validate "$APP"
+          spctl -a -t exec -vvv "$APP" 2>&1 | tee /tmp/spctl-x64.txt
+          grep -q ': accepted' /tmp/spctl-x64.txt || { hdiutil detach /Volumes/PruebaFCx64 -quiet; echo "FALLA: rechazada."; exit 1; }
+          echo ""
+          echo "=== su motor es x86_64 ==="
+          lipo -archs "$APP/Contents/Resources/llm/darwin-x64/llama-server"
+
+          hdiutil detach /Volumes/PruebaFCx64 -quiet
+          echo ""
+          echo "OK: firmada, notarizada y aceptada. Ejecutarla no se puede acá:"
+          echo "    este runner es Apple Silicon y su motor es Intel."

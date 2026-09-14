@@ -1,0 +1,375 @@
+# Compila, FIRMA con Developer ID y NOTARIZA los dos .dmg de macOS en un runner
+# de GitHub.
+#
+# Existe para poder certificar la versión de Mac sin tener una Mac. El runner
+# trae Xcode, y con él codesign, notarytool y stapler.
+#
+# QUÉ GARANTIZA, que es bastante:
+#   · que los dos .dmg salgan firmados con nuestro Developer ID
+#   · que Apple los haya notarizado y que el ticket quede PEGADO al bundle
+#   · que Gatekeeper los acepte, en las dos arquitecturas
+#   · que los dos llama-server queden firmados con el mismo Team ID y que cada
+#     uno sea de la arquitectura que dice su carpeta
+#
+# QUÉ NO REEMPLAZA: usar la app en una Mac de verdad. Que Gatekeeper la acepte no
+# prueba que llama.cpp levante con el hardened runtime puesto, ni que una
+# generación termine. Eso hay que probarlo en una Mac.
+#
+# DIFERENCIA CON EL DE CONVERTEXTO, del que sale éste: allá los motores
+# (whisper.cpp y ffmpeg) se COMPILAN en el runner, y eso son entre 15 y 40
+# minutos y hace falta cmake y nasm. Acá el motor es llama.cpp y se baja ya
+# compilado del release oficial: son 21 MB de descarga y menos de un minuto. Por
+# eso este workflow no instala herramientas de compilación.
+name: Compilar para Mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      armar_entrega:
+        description: 'Armar también la carpeta de entrega (necesita LICENCIANTE completo en scripts/lib/user-docs.mjs)'
+        type: boolean
+        default: false
+
+# Dos corridas simultáneas pelearían por la misma caché. La nueva gana.
+# Sólo lectura del código: el workflow no escribe en el repositorio.
+permissions:
+  contents: read
+
+concurrency:
+  group: build-mac
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Fijo y no `macos-latest`: esa etiqueta cambia de sistema operativo sola, y
+    # no es algo que uno quiera que pase sin enterarse justo en el pipeline que
+    # firma y notariza.
+    #
+    # macos-15 y no macos-14 porque GitHub apaga la 14. El .p12 con algoritmos
+    # legacy (-keypbe PBE-SHA1-3DES -macalg sha1) se lee igual en macos-15: esos
+    # algoritmos no están deprecados en Sequoia, así que no hay que rehacer el
+    # certificado.
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # VA PRIMERO Y CORTA, antes de gastar la compilación entera.
+      #
+      # electron-builder NO corta si faltan los secrets de notarización:
+      # MacTargetHelper.notarizeIfProvided() imprime "skipped macOS notarization"
+      # y retorna, así que el build termina EN VERDE con dos .dmg sin notarizar y
+      # el aviso perdido entre miles de líneas de log.
+      - name: Los datos de firma tienen que estar
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MEDIFLASHY_CONTENIDO_KEY: ${{ secrets.MEDIFLASHY_CONTENIDO_KEY }}
+        run: |
+          faltan=""
+          for v in CSC_LINK CSC_KEY_PASSWORD CSC_NAME APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID MEDIFLASHY_CONTENIDO_KEY; do
+            [ -z "${!v}" ] && faltan="$faltan $v"
+          done
+          if [ -n "$faltan" ]; then
+            echo "Faltan estos secretos del repositorio:$faltan"
+            echo "Cargalos en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          # El Team ID son 10 caracteres alfanuméricos. Un salto de línea o un
+          # espacio pegado al copiar rompe notarytool con un error que no lo dice.
+          case "$APPLE_TEAM_ID" in
+            [A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]) ;;
+            *) echo "APPLE_TEAM_ID no tiene el formato de 10 caracteres alfanuméricos."; exit 1 ;;
+          esac
+
+          # En CSC_NAME va el Common Name del certificado SIN el prefijo
+          # "Developer ID Application: ". No es una preferencia de estilo:
+          # findIdentity() de app-builder-lib llama a checkPrefix(), que LANZA
+          # InvalidConfigurationError si el nombre arranca con ese prefijo.
+          #
+          # Se compara con `case`, sin imprimir el valor: es el nombre legal de
+          # quien firma, y no tiene por qué quedar escrito en ningún lado.
+          case "$CSC_NAME" in
+            "Developer ID Application:"*)
+              echo "CSC_NAME arranca con 'Developer ID Application: '."
+              echo "electron-builder corta con ese prefijo: guardá el secret con"
+              echo "sólo 'NOMBRE (TEAMID)'."
+              exit 1 ;;
+          esac
+
+          # El nombre viaja en el secret, así que la clave `identity` no puede
+          # volver al YAML: si vuelve, gana sobre CSC_NAME y el nombre legal
+          # queda otra vez escrito en un archivo del repositorio.
+          if grep -qE "^\s*identity:" electron-builder.yml; then
+            echo "electron-builder.yml volvió a tener 'mac.identity'."
+            echo "El nombre del certificado va en el secret CSC_NAME, no en un"
+            echo "archivo del repositorio. Sacá esa línea."
+            exit 1
+          fi
+
+          if grep -q 'COMPLETAR_' electron-builder.yml; then
+            echo "electron-builder.yml todavía tiene marcadores sin completar:"
+            grep -n 'COMPLETAR_' electron-builder.yml
+            exit 1
+          fi
+
+          echo "Los siete secretos están, el Team ID tiene buen formato y la identidad no quedó en el YAML."
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22, no 20: el instalador de Electron usa
+          # @electron-internal/extract-zip, que exige >=22.12. Con Node 20 el
+          # `npm ci` termina "bien" en cuatro segundos SIN bajar el binario de
+          # Electron, y después nada que lo necesite arranca.
+          node-version: 22
+
+      # RESTORE y SAVE van separados, y el save está después de verificar.
+      #
+      # Con el `actions/cache` de siempre (restore+save automático), una descarga
+      # que sale a medias se guarda igual al terminar el job. A partir de ahí
+      # todas las corridas restauran ese binario mutilado, `setup:llama` dice "ya
+      # instalado" y sale sin hacer nada, y el build queda roto sin que se
+      # entienda por qué.
+      #
+      # La clave incluye el hash de fetch-llama.mjs: ahí adentro está el número
+      # de build de llama.cpp, así que cambiarlo invalida la caché sola.
+      - name: Restaurar los motores
+        id: cache-motores
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            resources/llm/darwin-arm64
+            resources/llm/darwin-x64
+          key: llama-macos-${{ hashFiles('scripts/fetch-llama.mjs') }}
+
+      # El repo es PÚBLICO, así que el mazo y el bonus están cifrados en
+      # contenido-cifrado/. Primero se verifica que los originales NO estén en el
+      # repositorio —si alguien los commiteó, ya están a la vista y hay que saberlo
+      # ya— y recién después se descifran para compilar.
+      - name: Descifrar el contenido que se vende
+        env:
+          MEDIFLASHY_CONTENIDO_KEY: ${{ secrets.MEDIFLASHY_CONTENIDO_KEY }}
+        run: |
+          set -e
+          for f in src/main/services/mazosDeRegalo.ts scripts/lib/mapa-grupos.mjs; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "FALLA: $f está en el repositorio SIN cifrar. Sacalo del historial."
+              exit 1
+            fi
+          done
+          node scripts/contenido-cifrado.mjs descifrar
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # `npm ci` ya dispara el postinstall, que baja los motores pero corre con
+      # `--optional`: si falla, NO corta. Éste es el que sí corta. Cuando ya
+      # están (por caché o porque el postinstall anduvo), no hace nada.
+      - name: Bajar llama.cpp para las dos arquitecturas
+        run: npm run setup:llama
+
+      - name: Verificar los binarios
+        run: npm run verify:binaries
+
+      # Recién acá se guarda la caché, con los binarios ya verificados.
+      #
+      # Se guardan con la firma ad-hoc que les pone el script de setup, no con
+      # nuestro Developer ID, y eso es lo correcto: la firma de verdad la aplica
+      # electron-builder sobre las copias que van adentro del .app. Firmar en
+      # resources/ contaminaría la caché con firmas atadas a nuestro certificado.
+      - name: Guardar los motores en caché
+        if: steps.cache-motores.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            resources/llm/darwin-arm64
+            resources/llm/darwin-x64
+          key: llama-macos-${{ hashFiles('scripts/fetch-llama.mjs') }}
+
+      # Separa "estoy validando la firma de Apple" de "estoy armando la entrega".
+      #
+      # El contrato de licencia no tiene NADA que ver con Apple: es un requisito
+      # de defensa del consumidor, y los datos que pide no los usa ni el
+      # certificado ni notarytool. Pero `make:licenses` corre adentro de
+      # `build:mac` y corta si está incompleto, así que sin esto no se podría
+      # probar la certificación hasta tener resuelto lo legal.
+      - name: Modo de build
+        run: |
+          if [ "${{ inputs.armar_entrega }}" = "true" ]; then
+            echo "=============================================================="
+            echo " Modo ENTREGA."
+            echo ""
+            echo " El contrato de licencia tiene que estar completo o el build"
+            echo " corta. Estos .dmg son los que se venden."
+            echo "=============================================================="
+            echo "FLASHCARDS_EULA_INCOMPLETO=0" >> "$GITHUB_ENV"
+          else
+            echo "=============================================================="
+            echo " Modo PRUEBA DE FIRMA."
+            echo ""
+            echo " Los .dmg salen firmados y notarizados de verdad, pero con el"
+            echo " contrato de licencia SIN COMPLETAR adentro, porque ese"
+            echo " archivo viaja dentro del .app."
+            echo ""
+            echo " Sirven para validar la certificación de Apple de punta a"
+            echo " punta. Para vender hay que volver a correr esto con"
+            echo " 'armar_entrega' en true; tarda pocos minutos, porque los"
+            echo " motores quedan en caché."
+            echo "=============================================================="
+            echo "FLASHCARDS_EULA_INCOMPLETO=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compilar, firmar y notarizar los .dmg
+        # No hace falta armar ningún llavero a mano: createKeychain() de
+        # app-builder-lib ya hace create-keychain, unlock-keychain, import con
+        # -T /usr/bin/codesign y —lo que casi todos se olvidan—
+        # set-key-partition-list, que es el paso cuya ausencia produce el diálogo
+        # "codesign wants to access key" que cuelga el CI para siempre.
+        #
+        # La notarización sube el .app a Apple y espera el veredicto, una vez por
+        # arquitectura. Suele tardar de 2 a 5 minutos por envío.
+        #
+        # `build:mac` termina con `verify:firma-mac`, que es el que corta si algo
+        # de la firma o de la notarización no quedó como tiene que quedar.
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # El Common Name del certificado. Reemplaza a `mac.identity`, que se
+          # sacó del YAML para no dejar el nombre legal escrito en el repositorio.
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build:mac
+
+      # Si Apple rechaza el envío, la respuesta del submit NO dice por qué: hay
+      # que pedirle el log. Es el único lugar donde figura el binario exacto y el
+      # motivo ("does not have the hardened runtime enabled", por ejemplo).
+      - name: Si Apple rechazó el envío, pedirle el detalle
+        if: failure()
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set +e
+          echo "=== últimos envíos a notarizar ==="
+          xcrun notarytool history --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" | head -30
+          ID=$(xcrun notarytool history --apple-id "$APPLE_ID" \
+                 --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+               | grep -m1 '  id:' | awk '{print $2}')
+          if [ -n "$ID" ]; then
+            echo ""
+            echo "=== log del envío $ID ==="
+            xcrun notarytool log "$ID" --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID"
+          else
+            echo "(no hay ningún envío en el historial: el build falló antes de llegar a notarizar)"
+          fi
+          exit 0
+
+      # `verify:firma-mac` ya corrió adentro de build:mac y cortó si algo salió
+      # mal. Esto es para que quede LEGIBLE en el log qué firma quedó, sin tener
+      # que bajar el .dmg.
+      - name: Qué firma quedó, en las dos arquitecturas
+        run: |
+          set -e
+          echo "Carpetas que dejó electron-builder:"
+          ls -1 release
+          echo ""
+          # El nombre sale de package.json, igual que en verify-firma-mac: escrito a
+          # mano se quedó en "Flashcards" al copiar el proyecto, y este paso cortaba
+          # DESPUÉS de notarizar, sin subir ningún .dmg.
+          NOMBRE=$(node -p "require('./package.json').productName")
+          [ -n "$NOMBRE" ] || { echo "No pude leer productName de package.json"; exit 1; }
+          for APP in "release/mac-arm64/$NOMBRE.app" "release/mac/$NOMBRE.app"; do
+            [ -d "$APP" ] || { echo "no existe $APP"; exit 1; }
+            echo "=============================================================="
+            echo " $APP"
+            echo "=============================================================="
+            echo "--- FIRMA: tiene que haber 'Authority=Developer ID Application:',"
+            echo "    tres líneas Authority terminando en Apple Root CA, 'Timestamp='"
+            echo "    y 'flags=...runtime'. Si dice 'Signature=adhoc', no se firmó."
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -E '^(Authority|TeamIdentifier|Timestamp|Signature|CodeDirectory)'
+            echo ""
+            echo "--- NOTARIZACIÓN: 'The validate action worked!'"
+            xcrun stapler validate "$APP"
+            echo ""
+            echo "--- GATEKEEPER: 'accepted' y 'source=Notarized Developer ID'"
+            spctl -a -t exec -vvv "$APP"
+            echo ""
+            echo "--- LOS DOS MOTORES: mismo Developer ID que la app."
+            echo "    Cada uno es de UNA arquitectura, no universal: se bajan por"
+            echo "    separado del release de llama.cpp."
+            for BIN in "$APP/Contents/Resources/llm/darwin-arm64/llama-server" \
+                       "$APP/Contents/Resources/llm/darwin-x64/llama-server"; do
+              echo "  $(echo "$BIN" | sed 's|.*/llm/||'): $(lipo -archs "$BIN")"
+              codesign -dv --verbose=4 "$BIN" 2>&1 \
+                | grep -E '^(Authority|TeamIdentifier|Timestamp|CodeDirectory)' | sed 's/^/    /'
+            done
+            echo ""
+          done
+
+      # SÓLO en modo prueba: son los .dmg con el nombre crudo de electron-builder
+      # y el contrato sin completar adentro. No se venden.
+      # En un repo PÚBLICO cualquier usuario de GitHub puede bajar los artefactos
+      # de una corrida. Un .dmg suelto sería la app entera, con el mazo adentro,
+      # gratis. Así que se sube SELLADO con la clave del contenido y se abre en la
+      # máquina de desarrollo con `node scripts/contenido-cifrado.mjs abrir`.
+      - name: Sellar los .dmg de prueba
+        if: ${{ !inputs.armar_entrega }}
+        env:
+          MEDIFLASHY_CONTENIDO_KEY: ${{ secrets.MEDIFLASHY_CONTENIDO_KEY }}
+        run: |
+          set -e
+          mkdir -p mediflashy-mac-prueba sellado
+          cp release/*.dmg mediflashy-mac-prueba/
+          node scripts/contenido-cifrado.mjs sellar mediflashy-mac-prueba sellado/mediflashy-mac-prueba.mfenc
+
+      - name: Subir los .dmg sellados (build de prueba)
+        if: ${{ !inputs.armar_entrega }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediflashy-mac-prueba
+          path: sellado/mediflashy-mac-prueba.mfenc
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Armar la carpeta de entrega
+        if: ${{ inputs.armar_entrega }}
+        run: npm run drive
+
+      # SÓLO la carpeta de Mac, y no "Mediflashy - Entregables" entera.
+      #
+      # `npm run drive` arma las dos, pero en este runner no existen los .exe de
+      # Windows, así que la carpeta de Windows saldría con el aviso de "FALTA" en
+      # lugar de los instaladores. Subir eso sería entregar una carpeta que
+      # parece completa y no lo está.
+      #
+      # La de Windows ya está armada y verificada en la máquina de desarrollo.
+      # Lo que baja de acá se pone AL LADO de esa, dentro de la misma carpeta
+      # "Mediflashy - Entregables".
+      - name: Sellar la carpeta de Mac
+        if: ${{ inputs.armar_entrega }}
+        env:
+          MEDIFLASHY_CONTENIDO_KEY: ${{ secrets.MEDIFLASHY_CONTENIDO_KEY }}
+        run: |
+          set -e
+          mkdir -p sellado
+          node scripts/contenido-cifrado.mjs sellar 'Mediflashy - Entregables/Versión MacOs' sellado/mediflashy-mac-entrega.mfenc
+
+      - name: Subir la carpeta de Mac sellada, lista para Drive
+        if: ${{ inputs.armar_entrega }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediflashy-mac-entrega
+          path: sellado/mediflashy-mac-entrega.mfenc
+          if-no-files-found: error
+          retention-days: 30

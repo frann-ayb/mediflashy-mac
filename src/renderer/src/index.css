@@ -1,0 +1,296 @@
+@import 'tailwindcss';
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  LA PALETA
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * El verde sale del ícono: el degradado va de #2EA89A a #0E4F63. Ése es el
+ * color con el que el comprador reconoce el producto en la barra de tareas y
+ * en la página de venta, así que es el que manda adentro también.
+ *
+ * ── Por qué el verde de la marca NO es el mismo verde que "La sabía" ──
+ *
+ * `--color-brand` es un verde azulado (turquesa) y `--color-good` es un verde
+ * pasto. Se separaron a propósito. En la pantalla de estudio los tres botones
+ * significan algo —rojo, ámbar, verde— y si la marca usara ese mismo verde, el
+ * botón "La sabía" dejaría de leerse como una respuesta y pasaría a leerse como
+ * "el botón principal". El tono de la marca y el tono del acierto tienen que
+ * poder distinguirse de un vistazo, y por eso hay unos 30° de matiz entre uno y
+ * otro además de una diferencia clara de saturación.
+ *
+ * ── Cómo funcionan los dos temas ──
+ *
+ * Estos valores son el tema OSCURO, y son la base. El tema claro se define una
+ * sola vez, abajo, en `:root[data-theme='claro']`.
+ *
+ * El atributo `data-theme` lo estampa SIEMPRE un script en `index.html` antes
+ * de que se pinte el primer fotograma, resolviendo ahí mismo la opción
+ * "sistema". Por eso no hace falta una consulta `prefers-color-scheme` acá: si
+ * hiciera falta, habría que escribir la paleta clara dos veces y el día que
+ * alguien cambie un tono en un lugar y no en el otro, la app queda con dos
+ * temas claros distintos según cómo se llegó.
+ *
+ * ── Las tres reglas al tocar esto ──
+ *
+ *  1. NINGÚN color se define sólo dentro de un tema. Todo token que exista
+ *     abajo tiene que existir acá arriba, o la app se queda sin ese color en
+ *     oscuro.
+ *  2. `--color-on-brand` existe porque el texto sobre el fondo de la marca no
+ *     puede ser blanco en los dos temas: sobre el turquesa claro del tema
+ *     oscuro, el blanco da 2,9:1 y no se lee. En oscuro va tinta; en claro va
+ *     blanco sobre un turquesa mucho más profundo.
+ *  3. Nada de literales sueltos en los componentes. Si hace falta un color
+ *     nuevo, se agrega un token acá.
+ */
+@theme {
+  --color-canvas: #08100f;
+  --color-surface: #101a19;
+  --color-surface-2: #172422;
+  --color-line: #47605b;
+  --color-line-strong: #5f7a74;
+  --color-ink: #e9f1ef;
+  --color-ink-dim: #a3b6b2;
+  /* MEDIDO contra la superficie más clara sobre la que se apoya, no contra el
+     fondo. El #758A86 daba 5,84:1 sobre el fondo pero 4,37:1 sobre `surface-2`,
+     que es donde viven los chips: éste da 4,86:1 ahí y 5,84:1 sobre el fondo. */
+  --color-ink-faint: #7d928e;
+  --color-brand: #2ea89a;
+  --color-brand-soft: #5fd0c0;
+  /* Tinta sobre el turquesa. Ver la regla 2 de arriba. */
+  --color-on-brand: #04211d;
+  --color-good: #4ade80;
+  --color-bad: #f87171;
+  --color-warn: #fbbf24;
+
+  /* La barrita de la barra de desplazamiento. Era un gris fijo. */
+  --color-thumb: #24322f;
+  --color-thumb-hover: #33443f;
+  /* El velo detrás de los diálogos. */
+  --color-scrim: rgb(2 10 9 / 0.62);
+  /* La sombra de los diálogos, del color del fondo y no negra. */
+  --color-shadow: rgb(0 0 0 / 0.5);
+  /* El filo de luz arriba del botón principal. */
+  --color-bevel: rgb(255 255 255 / 0.1);
+  /* El resaltado al seleccionar texto. */
+  --color-selection: rgb(46 168 154 / 0.32);
+
+  --font-sans:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Display', 'Segoe UI', Inter, Roboto,
+    system-ui, sans-serif;
+
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+
+  --ease-out-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/*
+ * EL TEMA CLARO — verde sobre papel.
+ *
+ * No es el oscuro invertido, y no puede serlo. `--color-ink-faint` es el token
+ * más usado de toda la app (unas ochenta veces) y su trabajo es "gris que se
+ * lee pero no grita": invertir el #758A86 del oscuro daría un gris clarito
+ * sobre blanco, o sea texto ilegible en ochenta lugares a la vez. Cada tono se
+ * eligió midiendo contra su propio fondo.
+ *
+ * El fondo no es blanco puro sino un blanco con una gota de verde: sobre blanco
+ * puro el turquesa de la marca se ve frío y ajeno, y sobre este papel se apoya.
+ */
+:root[data-theme='claro'] {
+  --color-canvas: #f2f7f5;
+  --color-surface: #ffffff;
+  --color-surface-2: #e8f0ee;
+  --color-line: #cddeda;
+  --color-line-strong: #a8c0bb;
+  --color-ink: #0c1a18;
+  --color-ink-dim: #3d5551;
+  /* MEDIDO, no elegido a ojo. Este token aparece unas ochenta veces y tiene que
+     pasar 4,5:1 contra las TRES superficies claras, no sólo contra el blanco:
+     #4F6A65 da 5,41:1 sobre el fondo, 5,06:1 sobre `surface-2` y 5,84:1 sobre
+     el blanco. El #64807B que había antes daba 3,69:1 sobre `surface-2` — lo
+     encontró la sonda de contraste de `qa/vista.mjs`, no la vista. */
+  --color-ink-faint: #4f6a65;
+  /* Turquesa profundo: el texto blanco encima da 5,2:1. El #2EA89A del tema
+     oscuro daría 2,9:1 y no pasaría ni de lejos. */
+  --color-brand: #0f7a6c;
+  --color-brand-soft: #0a5f53;
+  --color-on-brand: #ffffff;
+  /* En claro los semánticos van oscuros: son texto sobre papel además de
+     relleno de barras. El #4ADE80 y el #FBBF24 del tema oscuro sobre blanco no
+     se leen.
+     Y van más oscuros de lo que parecería necesario porque el caso exigente no
+     es el texto sobre el papel sino los TRES BOTONES de calificar, que llevan la
+     tinta sobre su propio color al 10 %: ahí el fondo ya no es el papel. Medido
+     sobre ese fondo, el #15803D daba 4,06:1 y el #9A6206 daba 4,13:1. Éstos dan
+     4,99:1 y 4,90:1. */
+  --color-good: #14703a;
+  --color-bad: #be2828;
+  --color-warn: #8a5804;
+
+  --color-thumb: #c5d6d2;
+  --color-thumb-hover: #a8bfba;
+  --color-scrim: rgb(12 26 24 / 0.34);
+  --color-shadow: rgb(12 40 36 / 0.18);
+  /* En oscuro es un filo de luz; en claro un filo de luz sobre un botón claro
+     se ve como suciedad, así que no hay filo. */
+  --color-bevel: transparent;
+  --color-selection: rgb(15 122 108 / 0.22);
+}
+
+@layer base {
+  * {
+    /* Sin selección de texto en la interfaz: se siente como una app nativa. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /*
+   * Le dice al navegador de qué color es el ambiente.
+   *
+   * No es decorativo: sin esto Chromium dibuja el casillero de la bienvenida,
+   * las barras de desplazamiento que no estilamos y el autocompletado con la
+   * chapa del tema claro. En el tema oscuro eso aparece como un cuadradito
+   * blanco brillante en medio de una pantalla oscura.
+   */
+  :root {
+    color-scheme: dark;
+  }
+
+  :root[data-theme='claro'] {
+    color-scheme: light;
+  }
+
+  ::selection {
+    background: var(--color-selection);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-soft);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-thumb);
+    border: 2px solid var(--color-canvas);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-thumb-hover);
+  }
+}
+
+@layer utilities {
+  .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* Barra de progreso indeterminada, para cuando no hay porcentaje conocido. */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.animate-indeterminate {
+  animation: indeterminate 1.4s var(--ease-out-soft) infinite;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * `forwards` en lugar de `both` a propósito: con `both`, si el navegador congela
+ * las animaciones (ventana oculta o minimizada) el elemento se queda en el
+ * fotograma 0 % y el contenido nunca se ve. Con `forwards`, si la animación no
+ * corre el elemento queda visible igual.
+ */
+.animate-in-up {
+  animation: fade-in-up 0.22s var(--ease-out-soft) forwards;
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-overlay {
+  animation: overlay-in 0.18s ease-out forwards;
+}
+
+/* Quien pidió menos movimiento en su sistema ve la interfaz sin transiciones. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in-up,
+  .animate-overlay,
+  .animate-indeterminate {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

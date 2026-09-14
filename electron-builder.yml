@@ -1,0 +1,253 @@
+# Identidad propia. Flashcards y Convertexto conviven en la misma computadora sin
+# pisarse nada: distinto appId, distinto nombre, distinta carpeta de datos
+# (APP_FOLDER en src/main/services/core/paths.ts).
+#
+# EL appId TIENE QUE SER ÚNICO Y NO SE TOCA DESPUÉS DE PUBLICAR. Windows
+# identifica una aplicación instalada por su appId, no por su nombre: si se
+# cambiara en una actualización, el instalador nuevo no reconocería la versión ya
+# instalada como la misma app y quedarían las dos, con dos accesos directos y dos
+# entradas en "Agregar o quitar programas". Quien ya compró tendría que
+# desinstalar a mano una versión que aparentemente no tiene nada que ver.
+appId: com.digiconocimiento.mediflashy
+productName: Mediflashy
+copyright: Copyright © 2026 Digiconocimiento
+
+directories:
+  buildResources: build
+  output: release
+
+# No hay módulos nativos: ni ts-fsrs, ni mammoth, ni pdfjs-dist, ni fflate traen
+# binarios. Esto evita que electron-builder pida herramientas de compilación, y es
+# la razón por la que se descartó SQLite para guardar los mazos.
+npmRebuild: false
+
+# Saca el contrato de licencia del paquete cuando el build es de PRUEBA, y afirma
+# que el aviso de licencias de terceros siga adentro. El razonamiento largo (por
+# qué en afterPack y no en afterSign) está en el propio archivo.
+afterPack: ./scripts/after-pack.mjs
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+  - '!**/{test,tests,__tests__,spec,docs,doc,example,examples,.github}/**'
+  - '!**/{.eslintrc,.eslintrc.js,.eslintrc.json,.prettierrc,tsconfig.json,CHANGELOG.md,README.md}'
+
+# Los documentos que viajan adentro del paquete, en las dos plataformas.
+#
+# El MOTOR no está acá: va en `win.extraResources` y `mac.extraResources`, filtrado
+# por plataforma. Ver el comentario de cada uno.
+#
+# A diferencia de Convertexto, acá no viajan ni whisper ni ffmpeg: Flashcards no
+# toca audio. Son 131 MB menos de recursos sin comprimir, pero MEDIDO sobre el
+# instalador la diferencia es bastante menor: 115 MB contra los 149 MB de
+# Convertexto 3.0.0. El motivo es que lo que pesa de verdad es Electron —225 MB
+# sólo el ejecutable, más 47 MB de locales y 25 MB de dxcompiler.dll— y eso no
+# cambia. Las DLL de ffmpeg además comprimen muy bien, así que sacarlas ahorra
+# menos de lo que su tamaño en disco sugiere.
+# ------------------------------------ Windows ------------------------------------
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+  # La app se distribuye sin certificado de firma de código en Windows (decisión
+  # de presupuesto, igual que en Convertexto). En macOS sí está firmada.
+  signAndEditExecutable: true
+
+  # El motor, SÓLO el de Windows.
+  #
+  # Antes esto colgaba del `extraResources` común y copiaba la carpeta `llm`
+  # ENTERA. En una máquina que hubiera corrido `setup:llama` para las dos
+  # plataformas, el instalador de Windows se llevaba también los 20 MB de binarios
+  # de macOS: peso muerto que el comprador descarga, que el antivirus escanea y que
+  # nunca se ejecuta. Declarándolo por plataforma, cada instalador lleva lo suyo.
+  extraResources:
+    # Los tres documentos legales. Se repiten en las dos plataformas y NO se usa
+    # un ancla de YAML para compartirlos: un ancla sobre una secuencia se inserta
+    # como UN elemento, así que `- *documentos` deja una lista adentro de la lista
+    # y electron-builder recibe un array donde espera un objeto. Verificado
+    # parseando el YAML: salía `[[doc, doc, doc], {from: llm...}]`.
+    - from: resources/LICENCIAS DE TERCEROS.txt
+      to: LICENCIAS DE TERCEROS.txt
+    - from: resources/LICENCIA DE USO.txt
+      to: LICENCIA DE USO.txt
+    - from: resources/REQUISITOS Y FUNCIONES.txt
+      to: REQUISITOS Y FUNCIONES.txt
+    - from: resources/llm/win32-x64
+      to: llm/win32-x64
+      filter:
+        - '**/*'
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Mediflashy
+  # EN `false` A PROPÓSITO, y es lo contrario de lo que hace Convertexto.
+  #
+  # Con `true`, electron-builder borra %APPDATA%\Mediflashy en su propia sección
+  # de desinstalación, sin preguntar. En Convertexto eso está bien: ahí adentro
+  # hay modelos redescargables y transcripciones que el usuario ya exportó.
+  #
+  # Acá adentro están sus materias, sus unidades, sus tarjetas y su historial de
+  # repasos completo. Meses de estudio que NO existen en ningún otro lado y que no
+  # se pueden volver a generar. Borrar eso sin preguntar es inaceptable.
+  #
+  # Y no alcanzaba con preguntar en `customUnInstall`: la sección propia de
+  # electron-builder borraría la carpeta igual, así que la pregunta habría sido
+  # una mentira. Con esto en `false`, TODO el borrado lo hace nuestro macro, que
+  # es el que pregunta primero. Ver build/installer.nsh.
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+  installerLanguages:
+    - es_ES
+  language: '3082'
+  artifactName: Mediflashy-${version}-Windows-Instalador.${ext}
+
+portable:
+  artifactName: Mediflashy-${version}-Windows-Portable.${ext}
+  # NO usar `unpackDirName`. Con la carpeta de autoextracción fija, todas las
+  # instancias comparten %TEMP%\<nombre> y el stub NSIS hace RMDir /r al cerrarse:
+  # abrir el portable dos veces deja a la instancia viva sin sus binarios, y la
+  # carpeta rota QUEDA rota. Verificado en Convertexto. Con la carpeta aleatoria
+  # cada instancia es independiente.
+
+# ------------------------------------- macOS -------------------------------------
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.education
+  icon: build/icon.png
+  darkModeSupport: true
+
+  # FIRMA CON DEVELOPER ID + NOTARIZACIÓN.
+  #
+  # VA SIN EL PREFIJO "Developer ID Application: ". NO SE LO AGREGUES.
+  #
+  # Parece un error de tipeo y no lo es. electron-builder lo rechaza a propósito:
+  # checkPrefix() en app-builder-lib/out/codeSign/macCodeSign.js tira
+  #   "Please remove prefix ... — appropriate certificate will be chosen
+  #    automatically"
+  # y el build muere ANTES de empaquetar. Ya pasó una vez en Convertexto.
+  #
+  # El motivo está en _findIdentity(): el prefijo lo pone la librería según el tipo
+  # de certificado que va a buscar, y lo que se escribe acá se usa como
+  # `line.includes(qualifier)` contra la línea completa que devuelve
+  # `security find-identity`. Es un FILTRO POR SUBSTRING, no el nombre completo.
+  #
+  # OJO CON LO QUE HACE Y LO QUE NO: si el certificado no está en el llavero,
+  # electron-builder NO corta. Sólo loguea un warning y sigue de largo, dejando
+  # una app SIN FIRMAR y SIN NOTARIZAR. Por eso `build:mac` termina con
+  # `verify:firma-mac`, que es el que realmente corta.
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # EL NOMBRE NO ESTÁ ACÁ, A PROPÓSITO: viaja en el secret CSC_NAME.
+  #
+  # Apple emite los certificados a nombre de una persona física, así que el CN
+  # es el nombre legal de quien firma. El repositorio de Mediflashy es PRIVADO
+  # (lleva el mazo que se vende), pero el nombre igual queda fuera del código:
+  # no hace falta que esté, y así no se filtra si algún día se comparte.
+  #
+  # No hace falta ninguna gimnasia para sacarlo: findIdentity() de
+  # app-builder-lib arranca con `qualifier || process.env.CSC_NAME`, así que sin
+  # la clave `identity` toma el valor del entorno y hace exactamente lo mismo.
+  # El workflow lo carga desde los secrets del repositorio junto con los otros
+  # cinco, y corta al principio si falta.
+  #
+  # PARA COMPILAR A MANO EN UNA MAC, exportalo antes:
+  #     export CSC_NAME='NOMBRE (TEAMID)'      # sin "Developer ID Application: "
+  #     npm run build:mac
+  #
+  # Si CSC_NAME queda vacío, electron-builder pasa a autodescubrir la identidad
+  # del llavero. Con un solo Developer ID adentro elige bien igual, pero se
+  # vuelve silencioso: por eso el workflow exige que el secret esté.
+  # ────────────────────────────────────────────────────────────────────────────
+
+  # `notarize` en electron-builder 26 es un BOOLEANO, no un objeto. El teamId no va
+  # acá: sale de las variables de entorno APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD y
+  # APPLE_TEAM_ID. La forma `notarize: { teamId: ... }` es de v24/v25 y en v26 el
+  # YAML ni la valida.
+  notarize: true
+
+  # Requisito de notarytool, no una opción: sin el flag `runtime` Apple rechaza el
+  # envío con "The executable does not have the hardened runtime enabled".
+  hardenedRuntime: true
+
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+
+  # El motor, nombrado explícitamente por arquitectura.
+  #
+  # Es redundante —@electron/osx-sign lo encuentra solo recorriendo Contents/—,
+  # pero de esto depende que la app haga lo único que hace: si el heurístico
+  # `isbinaryfile` fallara o el walk cambiara en una versión futura, llama-server
+  # quedaría con la firma ad-hoc del script de setup y Apple rechazaría el envío.
+  # Firmarlo dos veces con --force es inofensivo.
+  binaries:
+    - Contents/Resources/llm/darwin-arm64/llama-server
+    - Contents/Resources/llm/darwin-x64/llama-server
+
+  # El motor, sólo el de macOS — pero LAS DOS ARQUITECTURAS en los dos .dmg.
+  #
+  # Podría filtrarse por arquitectura y ahorrar ~20 MB en cada uno, y a propósito
+  # no se hace: `mac.binaries` de arriba nombra las dos rutas para firmarlas, y una
+  # que no exista es un build que falla o —peor— que sale con un binario sin firmar.
+  # Veinte megas es un precio barato por que el .dmg no dependa de en qué máquina se
+  # compiló. El respaldo de Rosetta en `resolveBinary()` (paths.ts) además usa el
+  # x64 si el arm64 faltara.
+  extraResources:
+    # Los tres documentos legales. Se repiten en las dos plataformas y NO se usa
+    # un ancla de YAML para compartirlos: un ancla sobre una secuencia se inserta
+    # como UN elemento, así que `- *documentos` deja una lista adentro de la lista
+    # y electron-builder recibe un array donde espera un objeto. Verificado
+    # parseando el YAML: salía `[[doc, doc, doc], {from: llm...}]`.
+    - from: resources/LICENCIAS DE TERCEROS.txt
+      to: LICENCIAS DE TERCEROS.txt
+    - from: resources/LICENCIA DE USO.txt
+      to: LICENCIA DE USO.txt
+    - from: resources/REQUISITOS Y FUNCIONES.txt
+      to: REQUISITOS Y FUNCIONES.txt
+    - from: resources/llm/darwin-arm64
+      to: llm/darwin-arm64
+      filter:
+        - '**/*'
+    - from: resources/llm/darwin-x64
+      to: llm/darwin-x64
+      filter:
+        - '**/*'
+
+  # Electron 43 (Chromium 150) soporta macOS Monterey 12 en adelante. Declarar
+  # 11.0 haría que una Mac con Big Sur dejara instalar la app para después
+  # crashear al abrirla, que es la peor forma de enterarse.
+  minimumSystemVersion: '12.0'
+
+  extendInfo:
+    # Flashcards NO pide micrófono ni captura de pantalla: no hay
+    # NSMicrophoneUsageDescription ni NSAudioCaptureUsageDescription, y tampoco
+    # está com.apple.security.device.audio-input en los entitlements. Lo único que
+    # toca del disco del usuario son los apuntes que él mismo elige.
+    NSDocumentsFolderUsageDescription: Mediflashy sólo lee el apunte que vos elegís para convertirlo en tarjetas. Nada de lo que abrís se envía a ningún lado ni queda guardado.
+    NSDownloadsFolderUsageDescription: Mediflashy sólo lee el apunte que vos elegís para convertirlo en tarjetas. Nada de lo que abrís se envía a ningún lado ni queda guardado.
+    NSHighResolutionCapable: true
+    LSMinimumSystemVersion: '12.0'
+
+dmg:
+  artifactName: Mediflashy-${version}-macOS-${arch}.${ext}
+  # `${arch}` acá NO escribe "arm64"/"x64" sino el SUFIJO de arquitectura de
+  # electron-builder: "-arm64" para Apple Silicon y CADENA VACÍA para x64. Por eso
+  # va pegado a la versión y sin espacio.
+  title: ${productName} ${version}${arch}
+  # El .dmg NO se firma, y con certificado eso SIGUE siendo lo correcto: la
+  # notarización se aplica al .app y el ticket queda pegado adentro del bundle, así
+  # que sobrevive al .dmg. Firmar el .dmg sin notarizarlo sería PEOR que no
+  # firmarlo, porque todo lo firmado tiene que estar notarizado.
+  sign: false

@@ -1,0 +1,15 @@
+{
+  "services/llamaServer.ts": "4997997124cfcf61",
+  "services/chunker.ts": "25135564ec1fb7eb",
+  "services/anchor.ts": "458cb37b94868555",
+  "services/download.ts": "4828750a4e3f445a",
+  "services/paths.ts": "2d473a127039d6cb",
+  "services/config.ts": "36579662a33f9c58",
+  "services/logger.ts": "0bb4700c727b0e9c",
+  "services/errors.ts": "7cd8dbd123a85b59",
+  "services/fsutil.ts": "1787e032d5bf63a0",
+  "services/summaryModels.ts": "052682ca5b6606b3",
+  "components/Modal.tsx": "19f0134eb5da05fd",
+  "components/primitives.tsx": "59aedc4484c4e5ce",
+  "components/ErrorBoundary.tsx": "a6451f63edb58dcc"
+}

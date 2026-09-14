@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements del .app principal de Flashcards.
+
+  CONTEXTO: distribución con Developer ID, FUERA de la Mac App Store. Eso quiere
+  decir que NO hay App Sandbox: nada de com.apple.security.app-sandbox ni de la
+  familia com.apple.security.files.* / network.*, que además romperían el acceso
+  al disco. El permiso para leer Documentos lo resuelve TCC con el
+  NSDocumentsFolderUsageDescription que está en electron-builder.yml, no un
+  entitlement.
+
+  Este archivo existe porque el hardened runtime está ACTIVADO (es requisito de
+  la notarización, no una opción). Cada clave de acá es el mínimo que la app
+  necesita para seguir funcionando con esa restricción puesta. Todo lo que se
+  agregue de más es una relajación de seguridad que Apple mira con lupa.
+
+  QUÉ SE SACÓ RESPECTO DE CONVERTEXTO, Y POR QUÉ:
+
+    com.apple.security.device.audio-input
+
+  Convertexto lo necesita porque graba. Flashcards no toca el micrófono ni
+  captura el audio del sistema: lee apuntes y genera texto. Un entitlement de
+  micrófono en una app que no graba es superficie de ataque regalada, y encima le
+  daría a macOS un motivo para mostrar un cartel de permiso que asustaría al
+  comprador sin ninguna razón. Si algún día se agrega, va en ESTE archivo Y en el
+  .inherit, junto con NSMicrophoneUsageDescription en electron-builder.yml.
+
+  OJO: hay un archivo hermano, entitlements.mac.inherit.plist, que se aplica a
+  los procesos Helper y al motor. Los entitlements NO se heredan de padre a hijo:
+  lo que falte allá falta de verdad. Si tocás una clave acá, tocala allá.
+-->
+<plist version="1.0">
+<dict>
+  <!-- V8 compila JavaScript a código máquina en tiempo de ejecución. Sin esto el
+       hardened runtime le prohíbe a Chromium mapear páginas ejecutables
+       (MAP_JIT) y el proceso muere apenas arranca. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Chromium tiene rutas que escriben en páginas ya marcadas como ejecutables.
+       Es lo que pide la documentación de notarización de Electron y lo que trae
+       la plantilla propia de electron-builder. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Validación de librerías desactivada.
+
+       ACÁ PESA MÁS QUE EN CONVERTEXTO, y conviene tenerlo claro antes de sacarla.
+
+       En Convertexto el análisis honesto era que probablemente no hacía falta:
+       whisper-cli y ffmpeg son ejecutables estáticos que se LANZAN como procesos
+       aparte, no se cargan adentro del proceso. En Flashcards el motor es
+       llama.cpp, y en macOS llama.cpp usa Metal: el backend carga la librería de
+       Metal del sistema y, según cómo se haya compilado el release, puede cargar
+       un default.metallib propio. Eso es carga de código dentro del proceso, que
+       es justamente lo que la validación de librerías gobierna.
+
+       Sin esta clave, el síntoma esperable no es un cartel: es "el motor no
+       arranca" o un crash a mitad de la generación, sin nada en pantalla que lo
+       explique, en las Mac de los compradores y no en la de desarrollo.
+
+       PARA SACARLA MÁS ADELANTE: quitala de los DOS archivos, compilá, y en una
+       Mac de prueba mirá la consola mientras generás tarjetas, filtrando por el
+       mensaje "library load disallowed" (con log stream y su flag predicate; acá
+       no se puede escribir el comando entero porque un comentario XML no admite
+       dos guiones seguidos). Si no aparece nada y la generación termina, no hacía
+       falta. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
