@@ -378,6 +378,129 @@ export function sembrarSiEstaVacio(): number {
   return puestas
 }
 
+/**
+ * Agrega las unidades de regalo que todavía no existen, sin tocar nada de lo
+ * que ya hay.
+ *
+ * ---------------------------------------------------------------------------
+ * Por qué hace falta además de `sembrarSiEstaVacio`
+ * ---------------------------------------------------------------------------
+ *
+ * `sembrarSiEstaVacio` sólo corre en el arranque en el que la biblioteca está
+ * en cero. Todos los demás arranques —que son casi todos, porque un comprador
+ * actualiza la app mucho después de instalarla— esa función no hace nada. Si
+ * mientras tanto el mazo de regalo creció (una materia nueva, o más unidades
+ * dentro de una que ya existía, que es exactamente lo que pasó al agregar
+ * fármacos en dos tandas), quien ya tenía la app instalada no lo recibe nunca:
+ * se queda con la foto del día en que la abrió por primera vez.
+ *
+ * ---------------------------------------------------------------------------
+ * LA REGLA, que es la misma de siempre pero unidad por unidad
+ * ---------------------------------------------------------------------------
+ *
+ * Una unidad que ya existe —con ese nombre, en esa materia, en esa carrera—
+ * NO SE TOCA. No se le agregan tarjetas, no se compara su contenido contra la
+ * fuente, nada. El usuario puede haber editado esas tarjetas, y una corrección
+ * futura al contenido de regalo no se le impone sola a quien ya la recibió:
+ * eso es un problema distinto (y más difícil, porque ahí sí hay que decidir
+ * qué hacer con una edición del usuario) que agregar una unidad que falta.
+ *
+ * ---------------------------------------------------------------------------
+ * El límite que se acepta a propósito
+ * ---------------------------------------------------------------------------
+ *
+ * Dos casos raros que se aceptan a propósito, los dos por el mismo motivo: la
+ * materia y la unidad se identifican por NOMBRE, porque el modelo de datos no
+ * guarda "esto lo creó la siembra" en ningún lado, y agregar ese campo ahora
+ * pediría migrar instalaciones existentes sin ninguna forma de saber, en una
+ * materia vieja, si la creó la app o el usuario.
+ *
+ *  1. Si alguien borra una unidad de regalo puntual —no la materia entera, una
+ *     unidad suelta— y más adelante una actualización agrega OTRA unidad
+ *     nueva a esa misma materia, la que se borró puede volver: esta función
+ *     no tiene forma de distinguir "nunca la tuvo" de "la tuvo y la borró",
+ *     porque la app promete no dejar ninguna marca escondida que sobreviva al
+ *     borrado de datos (ver el comentario de `sembrarSiEstaVacio`). Es la
+ *     misma aceptación que ya existe para la biblioteca entera, aplicada a
+ *     una unidad.
+ *
+ *  2. Si el usuario ya tiene SU PROPIA materia con el mismo nombre que una
+ *     materia de regalo que todavía no existía para él —caso de manual: crea
+ *     "Fármacos" para sus apuntes, y más tarde el mazo de regalo estrena una
+ *     materia con ese mismo nombre—, esta función la confunde con la de
+ *     regalo y le agrega las unidades ahí adentro. No borra ni pisa nada
+ *     suyo, sólo suma unidades que no pidió y que puede borrar una por una;
+ *     es molesto, no destructivo, y a cambio el mazo de regalo crece para
+ *     todo el mundo en vez de para nadie.
+ *
+ * Se llama en cada arranque, después de `sembrarSiEstaVacio()`: en el primer
+ * arranque no encuentra nada para agregar (todo lo creó la otra), y en los
+ * siguientes es la única de las dos que hace algo.
+ */
+export function sembrarContenidoNuevo(): number {
+  asegurarCargado()
+
+  const mismoNombre = (a: string, b: string): boolean => a.trim().toLocaleLowerCase('es') === b.trim().toLocaleLowerCase('es')
+
+  /*
+   * `createCarrera`/`createMateria`/`createUnidad` pasan el nombre por
+   * `safeDisplayName` antes de guardarlo, que reemplaza `<>:"/\|?*` por
+   * espacios porque son inválidos en un nombre de archivo de Windows. Varias
+   * materias y unidades de Farmacología llevan dos puntos en el nombre
+   * ("Farmacología Cardiovascular: antihipertensivos"), así que lo que queda
+   * GUARDADO no es igual, carácter por carácter, a `mazo.materia`.
+   *
+   * Sin pasar la fuente por el mismo filtro antes de comparar, esta función
+   * nunca encontraba esas materias ya creadas y las volvía a crear en cada
+   * arranque —duplicadas, con sus unidades adentro— en vez de reconocerlas
+   * como ya sembradas. Se detectó escribiendo la prueba de abajo, antes de
+   * que le pasara a un comprador de verdad.
+   */
+  const comoQuedaGuardado = (nombre: string): string => safeDisplayName(nombre, 120)
+
+  let puestas = 0
+  let unidadesNuevas = 0
+  const materiasTocadas = new Set<string>()
+
+  for (const mazo of MAZOS_DE_REGALO) {
+    try {
+      const nombreCarrera = comoQuedaGuardado(mazo.carrera)
+      const nombreMateria = comoQuedaGuardado(mazo.materia)
+      const nombreUnidad = comoQuedaGuardado(mazo.unidad)
+
+      let carrera = carreras.find((c) => mismoNombre(c.nombre, nombreCarrera))
+      if (!carrera) carrera = createCarrera(mazo.carrera)
+
+      let materia = listMaterias(carrera.id).find((m) => mismoNombre(m.nombre, nombreMateria))
+      if (!materia) materia = createMateria(carrera.id, mazo.materia)
+
+      const yaExiste = listUnidades(materia.id).some((u) => mismoNombre(u.nombre, nombreUnidad))
+      if (yaExiste) continue // la regla: no se toca
+
+      const u = createUnidad(materia.id, mazo.unidad)
+      const { guardadas } = saveCards(
+        u.id,
+        mazo.tarjetas.map((t) => ({ frente: t.frente, dorso: t.dorso, tipo: t.tipo, fuente: t.fuente }))
+      )
+      puestas += guardadas
+      unidadesNuevas++
+      materiasTocadas.add(`${mazo.carrera} / ${mazo.materia}`)
+    } catch (err) {
+      // Una unidad que no se pudo agregar no tiene que impedir que se agreguen
+      // las demás, ni que la app termine de arrancar.
+      logger.error('datos', `No pude agregar la unidad de regalo "${mazo.unidad}" (${mazo.materia}): ${(err as Error).message}`)
+    }
+  }
+
+  if (unidadesNuevas > 0) {
+    logger.info(
+      'datos',
+      `Contenido de regalo nuevo: se agregaron ${unidadesNuevas} unidad(es) con ${puestas} tarjeta(s) en ${materiasTocadas.size} materia(s) (${[...materiasTocadas].join(', ')}).`
+    )
+  }
+  return puestas
+}
+
 /* ------------------------------- validación ------------------------------- */
 
 const esTexto = (v: unknown): v is string => typeof v === 'string' && v.length > 0
@@ -412,12 +535,31 @@ function asegurarCargado(): void {
  * Las materias, opcionalmente acotadas a una carrera.
  *
  * `carreraId` en `null` o `undefined` devuelve TODAS, que es lo que necesitan el
- * buscador global y los arneses. Las pantallas pasan la carrera activa.
+ * buscador global, la vista "Todas las carreras" y los arneses. Las pantallas
+ * de una sola carrera pasan la carrera activa.
+ *
+ * `Materia.orden` es un número DENTRO de su carrera (0, 1, 2… arrancando de
+ * cero en cada una; ver `createMateria`), no un orden global. Por eso, para
+ * la lista de todas, no alcanza con ordenar por `(orden, nombre)` a secas: dos
+ * materias que son la primera de su carrera empatan en `orden: 0`, y ahí el
+ * desempate por nombre puede poner a cualquiera antes que a la que el usuario
+ * ordenó a propósito como primera de la carrera que sí quiere ver primero. Por
+ * eso primero se agrupa por el orden de la CARRERA (`Carrera.orden`, el mismo
+ * que usa el selector) y recién dentro de cada carrera se aplica el orden de
+ * la materia.
  */
 export function listMaterias(carreraId?: string | null): Materia[] {
   asegurarCargado()
-  const base = carreraId ? materias.filter((m) => m.carreraId === carreraId) : materias
-  return [...base].sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es'))
+  if (carreraId) {
+    return materias
+      .filter((m) => m.carreraId === carreraId)
+      .sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es'))
+  }
+  const ordenDeCarrera = new Map(carreras.map((c) => [c.id, c.orden]))
+  return [...materias].sort((a, b) => {
+    const porCarrera = (ordenDeCarrera.get(a.carreraId) ?? 0) - (ordenDeCarrera.get(b.carreraId) ?? 0)
+    return porCarrera || a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es')
+  })
 }
 
 /** La carrera de una materia, resolviendo el salto. `null` si algo quedo colgado. */

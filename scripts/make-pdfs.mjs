@@ -211,6 +211,32 @@ async function main() {
 
   const logo = logoDataUri()
   const docs = documentos()
+
+  /*
+   * "1. LEEME PRIMERO" es el primer documento que lee un comprador, antes
+   * incluso de abrir la app. Durante un tiempo tuvo, sin que nada lo marcara,
+   * la cifra y el ejemplo de tarjeta de OTRO producto (Psicoflashy: "1.507
+   * tarjetas de las 14 materias de la carrera" y una tarjeta de Psicoanálisis
+   * de "represión y negación") — porque este archivo vive fuera del build de
+   * TypeScript y nadie lo recorre al tocar `mazosDeRegalo.ts`. Este chequeo
+   * corta acá, en el único lugar donde `guiaInicio()` se puede llamar de
+   * verdad (`qa/siembra.ts` no puede: lo empaqueta esbuild en un solo archivo
+   * y `import.meta.url`, del que depende `user-docs.mjs`, no sobrevive eso).
+   */
+  for (const d of docs.filter((d) => d.clave === 'inicio-win' || d.clave === 'inicio-mac')) {
+    const texto = guiaATexto(d.doc)
+    if (texto.includes('1.507') || /represi[oó]n/i.test(texto)) {
+      console.error(`[pdf] "${d.archivo}" todavía tiene contenido de Psicoflashy (cifra o ejemplo viejo).`)
+      app.exit(1)
+      return
+    }
+    if (!/farmacolog[ií]a/i.test(texto)) {
+      console.error(`[pdf] "${d.archivo}" no menciona "Farmacología" en ningún lado.`)
+      app.exit(1)
+      return
+    }
+  }
+
   let total = 0
 
   for (const d of docs) {

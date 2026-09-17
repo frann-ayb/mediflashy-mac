@@ -88,6 +88,19 @@ const artefactos = {
 const hayWindows = Boolean(artefactos.installer || artefactos.portable)
 const hayMac = Boolean(artefactos.macArm || artefactos.macIntel)
 
+/*
+ * Los .dmg firmados que YA están en la carpeta de entrega se conservan cuando
+ * release/ no trae unos nuevos. Se compilan en el runner de Mac (el repo
+ * mediflashy-mac) y se bajan a mano: sin esto, correr `npm run drive` en Windows
+ * después se los llevaba puestos y volvía a poner el aviso de FALTA sobre una
+ * carpeta que estaba completa. Lo mismo al revés con los .exe si se corre en Mac.
+ */
+const dmgsYaEntregados =
+  !hayMac &&
+  [driveFiles({ hasWindows: false }).macArm, driveFiles({ hasWindows: false }).macIntel].every((n) =>
+    existsSync(join(OUT, 'Versión MacOs', n))
+  )
+
 if (!hayWindows && !hayMac) {
   console.error('No encontré instaladores en release/.')
   console.error('Compilá primero:  npm run build:win   (y/o  npm run build:mac  en una Mac)')
@@ -333,6 +346,8 @@ function armarCarpeta({ nombre, plataforma, binarios, faltante }) {
   const names = driveFiles(plataforma)
 
   const copias = binarios.filter((b) => b.origen)
+  const conservados = binarios.filter((b) => !b.origen && existsSync(join(dir, b.destino)))
+  for (const b of conservados) console.log(`   (conservé "${b.destino}", que ya estaba y release/ no trae uno nuevo)`)
 
   /*
    * Las dos guías del producto van en PDF; los tres documentos legales, en .txt.
@@ -349,6 +364,7 @@ function armarCarpeta({ nombre, plataforma, binarios, faltante }) {
 
   const esperados = new Set([
     ...copias.map((b) => b.destino),
+    ...conservados.map((b) => b.destino),
     pdfInicio,
     pdfAyuda,
     names.licenses,
@@ -441,7 +457,7 @@ hechas.push(
       { origen: artefactos.macArm, destino: macNames.macArm },
       { origen: artefactos.macIntel, destino: macNames.macIntel }
     ],
-    faltante: hayMac
+    faltante: hayMac || dmgsYaEntregados
       ? null
       : [
           'ESTA CARPETA TODAVÍA NO ESTÁ COMPLETA',
@@ -495,7 +511,7 @@ console.log('')
 console.log(`   ${'TOTAL'.padEnd(55)} ${mb(total).padStart(8)}`)
 console.log('')
 
-if (!hayMac) {
+if (!hayMac && !dmgsYaEntregados) {
   console.log('   ⚠  "Versión MacOs" tiene los textos pero NO los .dmg.')
   console.log('      Adentro quedó un archivo explicando cómo completarla.')
   console.log('')

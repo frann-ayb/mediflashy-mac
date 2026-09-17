@@ -23,6 +23,7 @@ import { ProgresoView } from '@/components/ProgresoView'
 import { IndicadorMemoria } from '@/components/IndicadorMemoria'
 import { ModelosModal } from '@/components/ModelosModal'
 import { BienvenidaModal } from '@/components/BienvenidaModal'
+import { AvisoGenerarModal } from '@/components/AvisoGenerarModal'
 import { SelectorCarrera } from '@/components/SelectorCarrera'
 import { AcercaDeModal } from '@/components/AcercaDeModal'
 
@@ -287,6 +288,16 @@ export function App(): ReactNode {
     void guardarConfig({ hideOnboarding: true, avisoAceptado: true })
   }, [guardarConfig])
 
+  /*
+   * El aviso de Generar se acepta una sola vez. Se marca en el estado ANTES de que
+   * vuelva la respuesta del disco: si no, el modal seguiría en pantalla el instante
+   * que tarda el guardado y parecería que el botón no hizo nada.
+   */
+  const aceptarAvisoIa = useCallback(() => {
+    setConfig((c) => (c ? { ...c, avisoIaAceptado: true } : c))
+    void guardarConfig({ avisoIaAceptado: true })
+  }, [guardarConfig])
+
   const irAEstudiar = useCallback((scope: Seleccion) => {
     setSeleccion(scope)
     setSeccion('estudiar')
@@ -492,6 +503,11 @@ export function App(): ReactNode {
       {modelos ? <ModelosModal nombre={info?.nombre ?? 'La app'} onClose={() => setModelos(false)} onAviso={setAviso} /> : null}
       {bienvenida ? (
         <BienvenidaModal yaVioLaGira={config?.hideOnboarding === true} onAceptar={aceptarBienvenida} />
+      ) : null}
+      {/* Cada vez que se entra a Generar sin haber aceptado, venga de la pestaña o
+          de cualquier botón que lleve ahí. Volver sin aceptar lleva a la Biblioteca. */}
+      {seccion === 'generar' && config && !config.avisoIaAceptado && !bienvenida ? (
+        <AvisoGenerarModal onAceptar={aceptarAvisoIa} onVolver={() => setSeccion('biblioteca')} />
       ) : null}
       {acercaDe ? <AcercaDeModal info={info} onClose={() => setAcercaDe(false)} onAviso={setAviso} /> : null}
     </div>

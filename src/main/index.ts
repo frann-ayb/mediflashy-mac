@@ -7,7 +7,7 @@ import { applyContentSecurityPolicy, denyAllPermissions } from './security'
 import { cleanStaleTemps, configFile, configureUserDataDir, logsDir, takeNotices } from './services/core/paths'
 import { stopServer, stopServerSync, sweepOrphanServer } from './services/core/llamaServer'
 import { logger } from './services/core/logger'
-import { load as loadLibrary, sembrarSiEstaVacio } from './services/deckStore'
+import { load as loadLibrary, sembrarContenidoNuevo, sembrarSiEstaVacio } from './services/deckStore'
 import { init as initReviewLog } from './services/reviewLog'
 import { idsVivos } from './services/stats'
 import { isActive as sesionActiva, end as endSesion } from './services/studySession'
@@ -229,6 +229,13 @@ if (!app.requestSingleInstanceLock()) {
       // biblioteca —necesita saber si está vacía— y ANTES del historial, que se
       // compacta contra la lista de tarjetas vivas.
       sembrarSiEstaVacio()
+      // Y lo que el mazo de regalo haya sumado DESPUÉS de esa primera vez —una
+      // materia nueva, o más unidades en una que ya existía—, para quien ya
+      // tenía la app instalada. Va después de la anterior por la misma razón:
+      // el primer arranque ya lo cubre `sembrarSiEstaVacio`, y ésta no
+      // encuentra nada para hacer. Antes de compactar el historial, por el
+      // mismo motivo que la de arriba.
+      sembrarContenidoNuevo()
       initReviewLog(idsVivos)
 
       const config = new ConfigStore(configFile())

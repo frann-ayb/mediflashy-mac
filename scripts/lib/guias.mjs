@@ -241,12 +241,15 @@ export function guiaInicio({ version = '1.0.0', names = {}, hasWindows = true, h
         t: 'ficha',
         caraFrente: 'Frente',
         caraDorso: 'Dorso',
-        frente: '¿Qué diferencia hay entre represión y negación?',
-        dorso: 'La represión saca la representación de la conciencia. La negación la admite en palabras y le niega el valor: «no es mi madre».'
+        frente: 'Paracetamol — Mecanismo de acción',
+        dorso: 'Inhibe la COX en el sistema nervioso central; por eso baja la fiebre y el dolor, pero casi no tiene efecto antiinflamatorio en los tejidos periféricos, a diferencia de los AINE clásicos.'
       },
       {
         t: 'p',
-        x: 'La app ya viene con **1.507 tarjetas de las 14 materias de la carrera**, listas para estudiar hoy. No hace falta que cargues nada para empezar.'
+        // Este número tiene que coincidir con TARJETAS_DISTINTAS_DE_REGALO
+        // (src/shared/types.ts): actualizalo a mano acá si esa constante cambia,
+        // porque este archivo es .mjs y no puede importarla directamente.
+        x: 'La app ya viene con **2.673 tarjetas de Farmacología**, listas para estudiar hoy. No hace falta que cargues nada para empezar.'
       }
     ]
   })
@@ -390,8 +393,8 @@ export function guiaInicio({ version = '1.0.0', names = {}, hasWindows = true, h
       {
         t: 'pasos',
         x: [
-          'Abrí la app. La primera vez te muestra tres pantallas de bienvenida: leelas y tocá **Empezar**.',
-          'Andá a **Estudiar** y elegí cualquier materia. Ya tenés 1.507 tarjetas cargadas.',
+          'Abrí la app. La primera vez te muestra cuatro pantallas de bienvenida: leelas y tocá **Entendido, empecemos**.',
+          'Andá a **Estudiar** y elegí cualquier materia. Ya tenés 2.673 tarjetas cargadas.',
           'Leé el frente y **respondé en tu cabeza antes de mirar**. Ése es el ejercicio; leer la respuesta directamente no sirve.',
           'Tocá **Mostrar resultado** (o la barra espaciadora) y compará.',
           'Calificate con **No la sabía**, **Más o menos** o **La sabía** — o con las teclas 1, 2 y 3.',

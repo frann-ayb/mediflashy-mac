@@ -323,6 +323,23 @@ async function recorrer(tamano, tema = 'oscuro') {
 
   await clic('Generar')
   await sleep(600)
+  /* La primera vez aparece el aviso de la generación con IA. Se captura y se mide
+     en los DOS temas acá mismo —después de aceptarlo no vuelve—, y se acepta. */
+  if (await evaluar(`document.body.innerText.includes('Antes de generar tarjetas con IA')`)) {
+    await captura(p('04a-aviso-generar'))
+    await revisar('aviso de generar')
+    const otro = tema === 'claro' ? 'oscuro' : 'claro'
+    await ponerTema(otro)
+    await captura(`${otro === 'claro' ? 'claro-' : ''}${tamano.nombre}-04a-aviso-generar`)
+    const antes = flojos.length
+    await revisar('aviso de generar')
+    for (const f of flojos.slice(antes)) f[0] = f[0].replace(tema, otro)
+    await ponerTema(tema)
+    await evaluar(`document.querySelector('[role="dialog"] input[type="checkbox"]')?.click()`)
+    await sleep(250)
+    await clic('Continuar')
+    await sleep(600)
+  }
   await captura(p('04-generar'))
   await revisar('generar')
 

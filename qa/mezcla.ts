@@ -44,6 +44,22 @@ import { TIPOS_TARJETA, type TipoTarjeta } from '@shared/types'
 /** Debajo de esto, los porcentajes son ruido y no se mide. */
 const MINIMO_PARA_MEDIR = 12
 
+/**
+ * Materias exceptuadas de los topes de esta página.
+ *
+ * "Fármacos" es la excepción a propósito: no es una unidad de examen, es un
+ * compendio de consulta por fármaco ("Warfarina — Mecanismo de acción",
+ * "Warfarina — Contraindicaciones"...), y esa forma ES la ficha técnica
+ * partida en pedacitos que el resto de este archivo existe para evitar. La
+ * decisión de tenerla así, decidida y no un descuido, quedó tomada el
+ * 2026-09-16 después de que una clienta esperara justo ese formato.
+ *
+ * Que esté exceptuada del TIPO de mezcla no la exceptúa de lo demás: sigue
+ * pasando por `qa/dosis.ts` (fuente obligatoria si dice un número) y por
+ * `qa/mazos.ts` (sin duplicados, sin tarjetas vacías).
+ */
+const MATERIAS_SIN_TOPE = new Set(['Fármacos'])
+
 interface Tope {
   tipo: TipoTarjeta
   /** Máximo permitido, en porcentaje de la unidad. `null` si no tiene techo. */
@@ -118,6 +134,7 @@ export function run(): void {
   const globales = new Map<TipoTarjeta, number>()
   let medidas = 0
   let exentas = 0
+  let exceptuadas = 0
   let totalTarjetas = 0
 
   for (const mazo of MAZOS_DE_REGALO) {
@@ -139,6 +156,10 @@ export function run(): void {
       globales.set(t.tipo, (globales.get(t.tipo) ?? 0) + 1)
     }
 
+    if (MATERIAS_SIN_TOPE.has(mazo.materia)) {
+      exceptuadas++
+      continue
+    }
     if (n < MINIMO_PARA_MEDIR) {
       exentas++
       continue
@@ -166,7 +187,9 @@ export function run(): void {
     }
   }
 
-  console.log(`${MAZOS_DE_REGALO.length} unidad(es), ${totalTarjetas} tarjeta(s). Medidas: ${medidas}. Exentas por chicas: ${exentas}.`)
+  console.log(
+    `${MAZOS_DE_REGALO.length} unidad(es), ${totalTarjetas} tarjeta(s). Medidas: ${medidas}. Exentas por chicas: ${exentas}. Exceptuadas por materia: ${exceptuadas}.`
+  )
 
   if (totalTarjetas > 0) {
     console.log('\nMezcla del mazo entero:')

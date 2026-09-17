@@ -605,12 +605,28 @@ async function main() {
 
   /* ---------------------- 5. lo que viaja adentro del exe ------------------- */
 
+  seccion('El aviso de la generación con IA')
+
+  ok(await clic('Generar'), 'está la pestaña Generar')
+  let avisoGenerar = ''
+  for (let i = 0; i < 15 && !avisoGenerar.includes('Antes de generar tarjetas con IA'); i++) {
+    await sleep(300)
+    avisoGenerar = await texto()
+  }
+  ok(avisoGenerar.includes('Antes de generar tarjetas con IA'), 'al abrir Generar aparece el aviso')
+  ok(avisoGenerar.includes('requisitos mínimos') && avisoGenerar.includes('agregar las tarjetas manualmente'), 'con los requisitos mínimos y la recomendación de cargar a mano')
+  await evaluar(`document.querySelector('[role="dialog"] input[type="checkbox"]')?.click()`)
+  await sleep(250)
+  await clic('Continuar')
+  await sleep(900)
+  ok(!(await texto()).includes('Antes de generar tarjetas con IA'), 'aceptado, deja usar Generar')
+  const cfgIa = JSON.parse(readFileSync(join(datos, 'config.json'), 'utf8'))
+  ok(cfgIa.avisoIaAceptado === true, 'y la aceptación queda guardada al lado del .exe')
+
   seccion('Los documentos legales viajan adentro del programa')
 
   const recursos = await evaluar('window.flashcards.getAppInfo().then(r => r.data?.modelsDir)')
   ok(typeof recursos === 'string' && recursos.length > 0, 'la app sabe dónde guarda los modelos', String(recursos))
-
-  console.log(`\n${fallas === 0 ? '✅' : '❌'} ${pruebas - fallas}/${pruebas} comprobaciones pasaron.`)
 
   try {
     ws.close()
@@ -625,6 +641,70 @@ async function main() {
   } catch {
     console.log(`   (la carpeta de prueba quedó en ${casa})`)
   }
+
+  /* -------------- 6. el portable en una carpeta CON ACENTOS ------------------ */
+
+  seccion('El portable, copiado a una carpeta con acentos')
+
+  /*
+   * "Versión Windows" —con acento— es exactamente el nombre de la carpeta de
+   * entrega, y durante un tiempo bastaba con eso para que el portable
+   * abandonara la portabilidad en silencio: la ruta le fallaba el `isAscii`
+   * de `dataRoot()`, y los datos cambiaban a `%APPDATA%` sin que nada lo
+   * dijera. No hace falta manejar la interfaz para probar esto: alcanza con
+   * que la app arranque y mirar dónde escribió, así que no se abre CDP.
+   */
+  const casaConAcento = mkdtempSync(join(tmpdir(), 'comprador-versión-'))
+  const exeConAcento = join(casaConAcento, portableName)
+  copyFileSync(join(win, portableName), exeConAcento)
+  console.log(`  (copiado a ${casaConAcento})`)
+
+  const appAcento = spawn(exeConAcento, [], { cwd: casaConAcento, env: entornoLimpio(casaConAcento), stdio: 'ignore' })
+
+  /*
+   * Dos esperas separadas y no una: la carpeta de datos aparece apenas
+   * arranca `dataRoot()`, pero el archivo de log tarda un pelo más en tener
+   * contenido (recién se escribe después de `logger.init`, y en esta prueba
+   * viene justo después de que la corrida anterior mató su propia instancia,
+   * con el sistema todavía liberando ese proceso). Pedirle las dos cosas a la
+   * misma espera corta hacía fallar la prueba por timing y no por que el
+   * arreglo no funcionara: los datos ya estaban, el log tardaba un segundo más.
+   */
+  const datosConAcento = join(casaConAcento, `${APP_NAME}-datos`)
+  let arrancoConAcento = false
+  for (let i = 0; i < 60 && !arrancoConAcento; i++) {
+    await sleep(500)
+    arrancoConAcento = existsSync(datosConAcento)
+  }
+  ok(arrancoConAcento, 'la app terminó de arrancar', `no until la carpeta de datos en ${datosConAcento}`)
+  ok(existsSync(datosConAcento), 'los datos quedan al lado del .exe, aunque la carpeta tenga acentos', datosConAcento)
+
+  const logAcento = join(datosConAcento, 'logs', `${APP_NAME.toLowerCase()}.log`)
+  let textoLog = ''
+  for (let i = 0; i < 30 && textoLog.length === 0; i++) {
+    await sleep(300)
+    textoLog = existsSync(logAcento) ? readFileSync(logAcento, 'utf8') : ''
+  }
+  ok(
+    textoLog.includes('Versión portable: los modelos y tus mazos quedan en'),
+    'y el propio log dice que la portabilidad funcionó, no que cayó a una alternativa',
+    textoLog.includes('No pude guardar los datos') ? 'el log dice que NO pudo guardar ahí' : '(no until ese aviso en el log)'
+  )
+  ok(
+    !textoLog.includes('No pude guardar los datos'),
+    'sin el aviso de "no pude guardar ahí" que salía antes del arreglo'
+  )
+
+  appAcento.kill()
+  matarSobrantes()
+  await sleep(500)
+  try {
+    rmSync(casaConAcento, { recursive: true, force: true })
+  } catch {
+    console.log(`   (la carpeta con acento quedó en ${casaConAcento})`)
+  }
+
+  console.log(`\n${fallas === 0 ? '✅' : '❌'} ${pruebas - fallas}/${pruebas} comprobaciones pasaron.`)
   process.exit(fallas === 0 ? 0 : 1)
 }
 

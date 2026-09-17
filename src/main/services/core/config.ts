@@ -21,6 +21,8 @@ const DEFAULTS: AppConfig = {
   // Nadie aceptó nada todavía. Es el único valor de fábrica que bloquea el uso
   // de la app hasta que el usuario haga algo, y eso es deliberado.
   avisoAceptado: false,
+  // El aviso de Generar tampoco se aceptó: aparece la primera vez que se abre.
+  avisoIaAceptado: false,
   language: 'es',
   // Se sigue al sistema operativo hasta que el usuario elija. Ver `Tema`.
   tema: 'sistema',
@@ -51,6 +53,7 @@ function sanitize(raw: unknown): AppConfig {
     // `=== true` y no un cast: un config.json viejo no trae el campo, y un
     // `undefined` tiene que leerse como "todavía no aceptó", nunca como que sí.
     avisoAceptado: obj.avisoAceptado === true,
+    avisoIaAceptado: obj.avisoIaAceptado === true,
     language: pick<Language>(obj.language, LANGUAGES, DEFAULTS.language),
     tema: pick<Tema>(obj.tema, TEMAS, DEFAULTS.tema),
     genLevel: pick<GenLevel>(obj.genLevel, GEN_LEVELS, DEFAULTS.genLevel),

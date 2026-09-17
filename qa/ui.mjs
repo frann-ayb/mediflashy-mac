@@ -536,8 +536,61 @@ async function main() {
 
   /* -------------------------- el mini-prompt no se guarda ------------------- */
 
+  seccion('El aviso de la generación con IA')
+
+  /*
+   * Generar con IA es un extra que depende de la computadora del comprador. El
+   * aviso tiene que aparecer la primera vez, decir que tiene requisitos mínimos y
+   * recomendar cargar las tarjetas a mano, y no dejar usar la función sin aceptar.
+   */
+  const avisoIa = () => evaluar(`!!document.querySelector('[role="dialog"]') && document.body.innerText.includes('Antes de generar tarjetas con IA')`)
+  const continuarApagado = () =>
+    evaluar(`(() => {
+      const b = [...document.querySelectorAll('[role="dialog"] button')].find(x => (x.textContent ?? '').trim() === 'Continuar')
+      return b ? b.disabled : null
+    })()`)
+
+  await clic('button', 'Generar')
+  await sleep(600)
+  ok((await avisoIa()) === true, 'al abrir Generar aparece el aviso')
+  const textoAviso = await texto()
+  ok(textoAviso.includes('los modelos de IA se descargan en tu computadora'), 'dice que los modelos se descargan en la computadora')
+  ok(textoAviso.includes('requisitos mínimos') && textoAviso.includes('4 GB de RAM'), 'dice que tiene requisitos mínimos, con la memoria')
+  ok(textoAviso.includes('recursos de tu computadora') && textoAviso.includes('no a una falla de la app'), 'y que una demora es la computadora, no un error de la app')
+  ok(textoAviso.includes('agregar las tarjetas manualmente'), 'recomienda cargar las tarjetas a mano')
+  ok(textoAviso.includes('Aceptar y no volver a mostrar'), 'la casilla dice "Aceptar y no volver a mostrar"')
+  ok((await continuarApagado()) === true, 'sin marcar la casilla, Continuar está apagado')
+  await captura('08b-aviso-generar')
+
+  await clic('button', 'Volver')
+  await sleep(500)
+  // Se reconoce la Biblioteca por su botón de materia nueva: el título "Materias"
+  // se ve en mayúsculas y `innerText` lo devuelve así.
+  const enBiblioteca = await evaluar(`!!document.querySelector('button[title="Nueva materia"]')`)
+  ok((await avisoIa()) === false && enBiblioteca === true, 'Volver lleva a la Biblioteca sin entrar a Generar')
+
+  await clic('button', 'Generar')
+  await sleep(600)
+  ok((await avisoIa()) === true, 'al volver a Generar sin haber aceptado, el aviso aparece otra vez')
+  await evaluar(`document.querySelector('[role="dialog"] input[type="checkbox"]')?.click()`)
+  await sleep(250)
+  ok((await continuarApagado()) === false, 'al marcar la casilla se habilita Continuar')
+  await clic('button', 'Continuar')
+  await sleep(700)
+  ok((await avisoIa()) === false, 'Continuar cierra el aviso y deja usar Generar')
+  const cfgAviso = JSON.parse(readFileSync(join(datos, 'config.json'), 'utf8'))
+  ok(cfgAviso.avisoIaAceptado === true, 'la aceptación queda guardada en la configuración')
+
+  await clic('button', 'Biblioteca')
+  await sleep(400)
+  await clic('button', 'Generar')
+  await sleep(600)
+  ok((await avisoIa()) === false, 'y no se vuelve a mostrar')
+
   seccion('El mini-prompt no toca el disco')
 
+  await clic('button', 'Biblioteca')
+  await sleep(300)
   await clic('button', 'Generar')
   await sleep(700)
   const SECRETO = 'ESTO-NO-DEBE-QUEDAR-GUARDADO-12345'

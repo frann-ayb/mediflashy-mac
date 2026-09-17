@@ -31,7 +31,7 @@ export const TEMAS: Tema[] = ['claro', 'oscuro', 'sistema']
  * `qa/siembra.ts` comprueba que coincidan con lo que efectivamente se siembra en
  * disco, y que la página de venta publique TARJETAS_DISTINTAS_DE_REGALO.
  */
-export const TARJETAS_DE_REGALO = 2173
+export const TARJETAS_DE_REGALO = 3453
 /**
  * Las tarjetas DISTINTAS, que es la cifra que se le muestra al usuario y la que
  * publica la landing. No es la misma que TARJETAS_DE_REGALO porque las tres
@@ -39,9 +39,9 @@ export const TARJETAS_DE_REGALO = 2173
  * 390 copiado tres veces: 2.173 cargadas son 1.393 distintas. Mostrar el total
  * cargado es prometer contenido que no existe.
  */
-export const TARJETAS_DISTINTAS_DE_REGALO = 1393
-export const MATERIAS_DE_REGALO = 13
-export const UNIDADES_DE_REGALO = 56
+export const TARJETAS_DISTINTAS_DE_REGALO = 2673
+export const MATERIAS_DE_REGALO = 14
+export const UNIDADES_DE_REGALO = 216
 /** Carreras que trae el mazo de Farmacología. */
 export const CARRERAS_DE_REGALO = 4
 
@@ -714,6 +714,13 @@ export interface AppConfig {
    * toda la app que bloquea el paso, y lo hace a propósito.
    */
   avisoAceptado: boolean
+  /**
+   * Si aceptó el aviso de la pestaña Generar: que la generación con IA descarga
+   * modelos, que tiene requisitos mínimos y que una demora es casi siempre la
+   * computadora, no la app. Mientras esté en `false`, abrir Generar muestra el
+   * aviso y no deja usarla sin marcar la casilla. Ver `AvisoGenerarModal`.
+   */
+  avisoIaAceptado: boolean
   /** Idioma en el que se generan las tarjetas (la interfaz es siempre español). */
   language: Language
   /** Claro, oscuro o lo que diga el sistema. */

@@ -107,7 +107,16 @@ function shortPath(dir: string): string | null {
   if (process.platform !== 'win32') return null
   try {
     mkdirSync(dir, { recursive: true })
-    const result = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${dir}") do @echo %~sI`], {
+    // Pasar 'cmd.exe' como archivo y el `for ... do` como un elemento del array de
+    // argumentos NO funciona: spawnSync entrecomilla ese argumento con sus propias
+    // reglas (pensadas para un argv genérico) antes de que cmd.exe lo vea, y
+    // cmd.exe interpreta las comillas de otra forma para `/C`. El resultado es una
+    // salida rota (`C:\"<la-ruta-larga-sin-acortar>\"`) SIEMPRE, con o sin acentos
+    // — nunca un nombre corto real. Pasar el comando como una única string con
+    // `shell: true` evita ese doble entrecomillado: así lo arma Node mismo para
+    // cmd.exe y sale bien.
+    const result = spawnSync(`for %I in ("${dir}") do @echo %~sI`, {
+      shell: true,
       encoding: 'utf8',
       windowsHide: true
     })
@@ -208,8 +217,23 @@ export function dataRoot(): string {
   const exeDir = portableExeDir()
   const portableRoot = exeDir ? join(exeDir, `${APP_FOLDER}-datos`) : null
 
+  /*
+   * El nombre corto 8.3 de la carpeta portable, igual que ya se hace con
+   * `userData` dos líneas más abajo.
+   *
+   * Sin esto, una carpeta de entrega como "Versión Windows" —con acento—
+   * reprobaba el `isAscii` de más abajo, la portabilidad se abandonaba en
+   * silencio y los datos caían a `userData`: el pendrive dejaba de llevarse
+   * los mazos y el modelo (hasta 2,7 GB) se volvía a descargar en cada
+   * computadora. `shortPath` crea la carpeta si hace falta y devuelve algo
+   * como "VERSIN~1\Mediflashy-datos", que sigue siendo la MISMA carpeta en
+   * disco, sin acentos en el nombre que usa el sistema de archivos.
+   */
+  const portableRootCorto = portableRoot ? shortPath(portableRoot) : null
+
   const candidates = [
     portableRoot,
+    portableRootCorto,
     userData,
     shortPath(userData),
     join(tmpdir(), APP_FOLDER),
@@ -220,9 +244,14 @@ export function dataRoot(): string {
 
   const chosen = candidates.find((c) => isAscii(c) && isUsable(c)) ?? candidates.find((c) => isUsable(c)) ?? userData
 
+  /* ¿Terminamos guardando al lado del .exe, sea con el nombre normal o con el
+     corto? Las dos cuentan como "portable anduvo": la carpeta en disco es la
+     misma, cambia sólo cómo se la nombra. */
+  const esPortableExitoso = chosen === portableRoot || (portableRootCorto !== null && chosen === portableRootCorto)
+
   // Lo que esperábamos usar: al lado del .exe si es portable, userData si no.
   const expected = portableRoot ?? userData
-  if (chosen === portableRoot) {
+  if (esPortableExitoso) {
     notices.push(`Versión portable: los modelos y tus mazos quedan en ${chosen}, al lado del programa.`)
   } else if (chosen !== expected) {
     notices.push(
@@ -240,7 +269,7 @@ export function dataRoot(): string {
     const locked = restrictToCurrentUser(chosen)
     if (locked) {
       notices.push(`${chosen} está fuera de tu carpeta de usuario: se restringieron los permisos para que sólo vos puedas leerla.`)
-    } else if (chosen === portableRoot) {
+    } else if (esPortableExitoso) {
       // Caso normal en pendrives: FAT32 y exFAT no tienen permisos por usuario.
       // No es una falla de la app y no hay que asustar, pero sí decirlo.
       notices.push(
