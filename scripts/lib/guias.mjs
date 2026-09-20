@@ -249,7 +249,7 @@ export function guiaInicio({ version = '1.0.0', names = {}, hasWindows = true, h
         // Este número tiene que coincidir con TARJETAS_DISTINTAS_DE_REGALO
         // (src/shared/types.ts): actualizalo a mano acá si esa constante cambia,
         // porque este archivo es .mjs y no puede importarla directamente.
-        x: 'La app ya viene con **2.673 tarjetas de Farmacología**, listas para estudiar hoy. No hace falta que cargues nada para empezar.'
+        x: 'La app ya viene con **2.889 tarjetas de Farmacología**, listas para estudiar hoy. No hace falta que cargues nada para empezar.'
       }
     ]
   })
@@ -394,7 +394,7 @@ export function guiaInicio({ version = '1.0.0', names = {}, hasWindows = true, h
         t: 'pasos',
         x: [
           'Abrí la app. La primera vez te muestra cuatro pantallas de bienvenida: leelas y tocá **Entendido, empecemos**.',
-          'Andá a **Estudiar** y elegí cualquier materia. Ya tenés 2.673 tarjetas cargadas.',
+          'Andá a **Estudiar** y elegí cualquier materia. Ya tenés 2.889 tarjetas cargadas.',
           'Leé el frente y **respondé en tu cabeza antes de mirar**. Ése es el ejercicio; leer la respuesta directamente no sirve.',
           'Tocá **Mostrar resultado** (o la barra espaciadora) y compará.',
           'Calificate con **No la sabía**, **Más o menos** o **La sabía** — o con las teclas 1, 2 y 3.',

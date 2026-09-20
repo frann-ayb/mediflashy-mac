@@ -31,7 +31,7 @@ export const TEMAS: Tema[] = ['claro', 'oscuro', 'sistema']
  * `qa/siembra.ts` comprueba que coincidan con lo que efectivamente se siembra en
  * disco, y que la página de venta publique TARJETAS_DISTINTAS_DE_REGALO.
  */
-export const TARJETAS_DE_REGALO = 3453
+export const TARJETAS_DE_REGALO = 3669
 /**
  * Las tarjetas DISTINTAS, que es la cifra que se le muestra al usuario y la que
  * publica la landing. No es la misma que TARJETAS_DE_REGALO porque las tres
@@ -39,9 +39,9 @@ export const TARJETAS_DE_REGALO = 3453
  * 390 copiado tres veces: 2.173 cargadas son 1.393 distintas. Mostrar el total
  * cargado es prometer contenido que no existe.
  */
-export const TARJETAS_DISTINTAS_DE_REGALO = 2673
+export const TARJETAS_DISTINTAS_DE_REGALO = 2889
 export const MATERIAS_DE_REGALO = 14
-export const UNIDADES_DE_REGALO = 216
+export const UNIDADES_DE_REGALO = 243
 /** Carreras que trae el mazo de Farmacología. */
 export const CARRERAS_DE_REGALO = 4
 
